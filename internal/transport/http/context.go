@@ -68,10 +68,11 @@ func URLParam(r *http.Request, key string) string { return chi.URLParam(r, key) 
 // PathID reads a chi URL parameter as a core.ID.
 func PathID(r *http.Request, key string) core.ID { return core.ID(URLParam(r, key)) }
 
-// clientIP resolves the caller's address for the audit log, honouring the
-// trusted-proxy header only when the server was configured to trust one —
-// see middleware.go's RealIP, which is what actually populates
-// r.RemoteAddr/X-Forwarded-For handling before this runs.
+// clientIP resolves the caller's address for the audit log.
+//
+// It reads r.RemoteAddr, which realIPMiddleware has already resolved: the
+// socket peer by default, or the forwarded client address when — and only
+// when — the request arrived from a declared trusted proxy. See realip.go.
 func clientIP(r *http.Request) string { return r.RemoteAddr }
 
 // authResultCtxKey carries the full auth.AuthResult (principal + method),

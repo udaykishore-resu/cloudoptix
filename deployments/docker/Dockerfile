@@ -20,7 +20,7 @@
 # the one that needs the schema can succeed while the pod still starts
 # against the wrong one.
 
-ARG GO_VERSION=1.24
+ARG GO_VERSION=1.25
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown

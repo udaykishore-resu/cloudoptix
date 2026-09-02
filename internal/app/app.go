@@ -199,6 +199,15 @@ func buildRouter(ctx context.Context, cfg *config.Config, app *App, logger *slog
 
 	var limiter = resilienceLimiter(cfg)
 
+	// A malformed trusted-proxy entry must stop startup rather than silently
+	// shrink the trusted set: the failure mode is that a real proxy stops
+	// being trusted, forwarding headers get ignored, and every audit record
+	// quietly starts naming the load balancer instead of the caller.
+	trustedProxies, err := transporthttp.ParseTrustedProxies(cfg.Server.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, fmt.Errorf("server.trusted_proxy_cidrs: %w", err)
+	}
+
 	deps := transporthttp.Deps{
 		Services:       app.Services,
 		Auth:           authenticator,
@@ -209,6 +218,8 @@ func buildRouter(ctx context.Context, cfg *config.Config, app *App, logger *slog
 		MaxBodyBytes:   cfg.Server.MaxRequestBytes,
 		RequestTimeout: cfg.Server.RequestTimeout,
 		CORSOrigins:    cfg.Server.CORSAllowedOrigins,
+		TrustedProxyHeader: cfg.Server.TrustedProxyHeader,
+		TrustedProxies:     trustedProxies,
 		AuditEnabled:   true,
 		OpenAPISpec:    loadOpenAPISpec(logger),
 	}

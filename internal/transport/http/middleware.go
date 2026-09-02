@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"time"
 
@@ -31,9 +32,11 @@ import (
 //     the audit record) needs a stable id to correlate against; nothing
 //     downstream can generate one that would already be visible to an
 //     earlier step, so it goes first.
-//  2. RealIP           — the access log and the audit "actor" record want
+//  2. realIP           — the access log and the audit "actor" record want
 //     the caller's real address, not the last hop's; must run before
-//     logging.
+//     logging. It honours a forwarding header only from a declared trusted
+//     proxy — see realip.go; chi's own RealIP trusts any sender and is
+//     deliberately not used.
 //  3. OTelSpan          — starts the request's root span before anything
 //     that should appear as a child of it (including the auth check,
 //     which is worth its own span when it fails).
@@ -84,6 +87,11 @@ type Deps struct {
 	MaxBodyBytes   int64
 	RequestTimeout time.Duration
 	CORSOrigins    []string
+	// TrustedProxyHeader and TrustedProxies configure realIPMiddleware.
+	// Both must be set for any forwarding header to be honoured; see
+	// realip.go for why the default is to trust nothing.
+	TrustedProxyHeader string
+	TrustedProxies     []netip.Prefix
 	// AuditAction, when the audit service is configured, is called for every
 	// mutating request after it completes, so the whole platform's mutating
 	// surface is audited from one place rather than each handler
@@ -110,7 +118,7 @@ func Chain(deps Deps, handler http.Handler) http.Handler {
 	h = recovererMiddleware(deps)(h)
 	h = accessLogMiddleware(deps)(h)
 	h = otelSpanMiddleware(deps)(h)
-	h = chimw.RealIP(h)
+	h = realIPMiddleware(deps)(h)
 	h = chimw.RequestID(h)
 	return h
 }
@@ -132,7 +140,7 @@ func PublicChain(deps Deps, handler http.Handler) http.Handler {
 	h = recovererMiddleware(deps)(h)
 	h = accessLogMiddleware(deps)(h)
 	h = otelSpanMiddleware(deps)(h)
-	h = chimw.RealIP(h)
+	h = realIPMiddleware(deps)(h)
 	h = chimw.RequestID(h)
 	return h
 }

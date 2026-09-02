@@ -141,6 +141,12 @@ type ServerConfig struct {
 	// address only — the safe default behind a proxy that is not yet
 	// declared trusted.
 	TrustedProxyHeader string `yaml:"trusted_proxy_header"`
+	// TrustedProxyCIDRs lists the peers whose forwarding header is believed,
+	// as CIDRs or bare addresses. The header alone is not enough: trusting it
+	// from any sender is the vulnerability, because the recorded address ends
+	// up on approval and audit records. Both this and TrustedProxyHeader must
+	// be set before any forwarding header is honoured.
+	TrustedProxyCIDRs []string `yaml:"trusted_proxy_cidrs"`
 }
 
 // Addr returns the listen address.
