@@ -125,7 +125,7 @@ jobs:
 
       - name: post PR comment
         if: always()
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: cost-regression
           path: pr-comment.md
