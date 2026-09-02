@@ -26,16 +26,6 @@ ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
 # ---------------------------------------------------------------------------
-# deps: cached separately from the source copy so `docker build` only
-# re-downloads modules when go.mod/go.sum actually change.
-# ---------------------------------------------------------------------------
-FROM golang:${GO_VERSION}-bookworm AS deps
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
-
-# ---------------------------------------------------------------------------
 # build: CGO disabled — the final stage has no C library, and CloudOptix's
 # dependencies (database/sql driver, AWS SDK, JWT/crypto) are all pure Go —
 # so a static binary is both correct and what makes the distroless
@@ -45,11 +35,29 @@ FROM golang:${GO_VERSION}-bookworm AS build
 ARG VERSION
 ARG COMMIT
 ARG BUILD_DATE
+ARG TARGETARCH
 WORKDIR /src
-COPY --from=deps /go/pkg/mod /go/pkg/mod
+
+# Modules download in their own layer, keyed on the manifests alone, so a
+# source-only change reuses it. The cache mount is shared with the build step
+# below within a single build, which is what makes the downloaded modules
+# visible there.
+#
+# There is deliberately no separate `deps` stage copying /go/pkg/mod forward.
+# A BuildKit cache mount is scratch space, not part of the stage's filesystem,
+# so `COPY --from=deps /go/pkg/mod` finds nothing to copy — and even with the
+# modules baked into a real layer, the cache mount in this stage would shadow
+# the copied directory and the build would re-download anyway.
 COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
 COPY . .
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+# GOARCH follows the build platform rather than being pinned to amd64: the
+# release workflow builds multi-arch under QEMU, and a hardcoded GOARCH there
+# produces amd64 binaries inside an arm64 image that then dies on exec.
+ENV CGO_ENABLED=0 GOOS=linux
+ENV GOARCH=${TARGETARCH}
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     for pkg in cloudoptix-api cloudoptix-worker coptx; do \
