@@ -344,14 +344,14 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant Opt as optimization.Service
+  participant Rules as optimization.Service
   participant Gov as governance.Service
   participant Auto as automation.Service
   participant AWS as Customer AWS Account
   participant Val as Validation (observation window)
 
-  Opt->>Opt: Rule fires on evidence -> Finding -> Recommendation
-  Opt->>Gov: Evaluate(policy, buildInput(recommendation, spec, budgets))
+  Rules->>Rules: Rule fires on evidence -> Finding -> Recommendation
+  Rules->>Gov: Evaluate(policy, buildInput(recommendation, spec, budgets))
   alt auto_execute (guards satisfied, non-destructive, automation enabled)
     Gov-->>Auto: Decision{Effect: auto_execute}
   else require_approval
