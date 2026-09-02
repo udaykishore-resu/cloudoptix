@@ -31,15 +31,7 @@ ARG BUILD_DATE=unknown
 # ---------------------------------------------------------------------------
 FROM golang:${GO_VERSION}-bookworm AS deps
 WORKDIR /src
-# third_party/ holds two modules resolved through local `replace` directives in
-# go.mod (see the comment there). `go mod download` reads their go.mod files, so
-# they must be present in this layer alongside the manifests — copying only
-# go.mod and go.sum fails with "reading third_party/yaml.v3/go.mod: no such file
-# or directory". They are a few hundred kilobytes of vendored source that change
-# about as often as go.mod itself, so including them here costs nothing in
-# layer-cache terms.
 COPY go.mod go.sum ./
-COPY third_party/ ./third_party/
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
