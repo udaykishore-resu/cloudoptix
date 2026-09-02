@@ -1,0 +1,43 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "variables": {"environment": {"value": "production"}, "region": {"value": "us-east-1"}},
+  "resource_changes": [
+    {
+      "address": "module.checkout.aws_instance.api",
+      "module_address": "module.checkout",
+      "type": "aws_instance",
+      "name": "api",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {"instance_type": "m5.2xlarge", "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}},
+        "after": {"instance_type": "m5.large", "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}}
+      }
+    },
+    {
+      "address": "module.checkout.aws_sagemaker_endpoint.scorer",
+      "module_address": "module.checkout",
+      "type": "aws_sagemaker_endpoint",
+      "name": "scorer",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "fraud-scorer", "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}}
+      }
+    },
+    {
+      "address": "module.checkout.aws_kinesisanalyticsv2_application.enricher",
+      "module_address": "module.checkout",
+      "type": "aws_kinesisanalyticsv2_application",
+      "name": "enricher",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "order-enricher", "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}}
+      }
+    }
+  ]
+}

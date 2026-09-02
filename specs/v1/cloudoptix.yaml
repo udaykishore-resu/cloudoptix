@@ -1,0 +1,344 @@
+# CloudOptix reference specification
+#
+# This is the fully-populated reference instance of the CloudOptix spec
+# format (apiVersion cloudoptix.io/v1, kind CloudOptixSpec). It exists so a
+# reader can see every field the schema defines used at once, with values
+# that are internally consistent rather than placeholder text.
+#
+# It describes a fictional mid-size e-commerce company, Meridian Retail,
+# whose "checkout-api" application is the same one worked through in the
+# root README.md's Architecture Economics example and onboarding
+# transcript. Where this file's numbers overlap with README.md, they were
+# chosen to match; where they don't overlap, they are illustrative but
+# internally consistent (e.g. the cost-per-checkout target below is the
+# same $0.0061 figure used throughout the documentation set).
+#
+# This file validates against ../cloudoptix.schema.json. See
+# specs/README.md for the spec lifecycle this file is one instance of, and
+# docs/onboarding-spec.md (SPEC-ONB-001..006) for how a file in this shape
+# is actually produced — normally nobody hand-writes this file end to end;
+# it accretes through a conversation and discovery, and this document is
+# what the accreted result looks like once frozen as an approved version.
+
+apiVersion: cloudoptix.io/v1
+kind: CloudOptixSpec
+
+organization:
+  name: Meridian Retail
+  industry: e-commerce
+  size: "1200 employees"
+  businessRegions:
+    - us
+    - eu
+  primaryContact: platform-team@meridianretail.example
+
+application:
+  name: checkout-api
+  description: >-
+    The order-capture and payment-authorization path for meridianretail.com
+    and its partner storefronts. Everything between "add to cart" and a
+    confirmed order record.
+  domain: checkout
+  criticality: critical
+  architecture:
+    style: microservices
+    computePlatforms:
+      - ecs-fargate
+      - lambda
+    databases:
+      - aurora-postgresql
+      - dynamodb
+    caches:
+      - elasticache-redis
+    messaging:
+      - sqs
+      - sns
+    storage:
+      - s3
+    networking:
+      - alb
+      - api-gateway
+      - nat-gateway
+    observability:
+      - cloudwatch
+      - prometheus
+    deploymentModel: UNKNOWN # left unresolved in conversation; see docs onboarding example — expected to be confirmed by discovery once the AWS account is connected
+    iac:
+      - terraform
+
+aws:
+  accessMode: assume_role
+  payerAccountId: "111111111111"
+  organizationId: o-meridian01
+  cur:
+    bucket: meridian-cur-reports
+    prefix: cloudoptix/checkout
+    region: us-east-1
+    reportName: meridian-checkout-cur
+  accounts:
+    - id: "222222222222"
+      alias: meridian-prod
+      environment: production
+      regions:
+        - us-east-1
+        - us-west-2
+      roleArn: arn:aws:iam::222222222222:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-7f3a9c1d
+      production: true
+    - id: "333333333333"
+      alias: meridian-staging
+      environment: staging
+      regions:
+        - us-east-1
+      roleArn: arn:aws:iam::333333333333:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-4b2e0a88
+      production: false
+
+workloads:
+  - name: checkout-api
+    type: service
+    platform: ecs-fargate
+    environment: production
+    criticality: critical
+    owner: payments-team@meridianretail.example
+    team: payments
+    dependsOn:
+      - checkout-db
+      - inventory-api
+    tagSelector:
+      Application: checkout-api
+      Team: payments
+    slo:
+      availability: 0.999
+      latencyP95Ms: 250
+      latencyP99Ms: 600
+      errorRateMax: 0.001
+  - name: checkout-db
+    type: database
+    platform: aurora-postgresql
+    environment: production
+    criticality: critical
+    owner: payments-team@meridianretail.example
+    team: payments
+    slo:
+      availability: 0.9995
+      latencyP99Ms: 20
+  - name: checkout-events
+    type: worker
+    platform: lambda
+    environment: production
+    criticality: high
+    owner: payments-team@meridianretail.example
+    team: payments
+    dependsOn:
+      - checkout-api
+
+business:
+  transactions:
+    - name: checkout
+      description: A completed purchase, from cart submission to order confirmation.
+      monthlyVolume: 10000000
+      workloads:
+        - checkout-api
+        - checkout-db
+        - checkout-events
+      targetCostPerUnit: 0.0061
+      volumeMetric: completed_orders
+      critical: true
+    - name: cart-abandonment-recovery
+      description: The scheduled job that emails abandoned-cart reminders.
+      monthlyVolume: 1800000
+      workloads:
+        - checkout-events
+      volumeMetric: reminder_emails_sent
+      critical: false
+  kpis:
+    - name: checkout-conversion-rate
+      unit: percent
+      target: 68.5
+    - name: cart-abandonment-rate
+      unit: percent
+      target: 22.0
+  customerCount: 3400000
+  peakSeasons:
+    - black-friday
+    - cyber-monday
+    - end-of-year-holiday
+  trafficProfile: "diurnal, ~4x peak/trough within a day, ~9x seasonal peak at Black Friday"
+
+objectives:
+  costReductionTarget: 0.15
+  monthlyBudget: 220000
+  availabilityTarget: 0.999
+  maxLatencyMs: 600
+  timeframe: "next two fiscal quarters"
+  costSlos:
+    - name: checkout-cost-per-transaction
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.0061
+      transaction: checkout
+      window: rolling_30d
+      errorBudgetPct: 0.10
+      breachActions:
+        - notify
+        - generate_recommendations
+    - name: checkout-absolute-monthly-spend
+      kind: absolute_spend
+      scope: application
+      target: 61200
+      window: calendar_month
+      errorBudgetPct: 0.08
+      breachActions:
+        - notify
+        - require_approval
+    - name: platform-waste-ratio
+      kind: waste_ratio
+      scope: organization
+      target: 0.10
+      window: rolling_30d
+      errorBudgetPct: 0.20
+      breachActions:
+        - notify
+        - open_investigation
+
+optimization:
+  riskTolerance: medium
+  preferences:
+    - prefer_reserved_over_spot_for_stateful
+    - prefer_graviton_where_compatible
+  excludedActions:
+    - delete_snapshot
+    - terminate_instance
+  excludedResources:
+    - checkout-db-primary
+  excludedTags:
+    cloudoptix.io/exclude: "true"
+  spotAllowed: true
+  commitmentAppetite: moderate
+  minSavingThreshold: 25
+
+automation:
+  enabled: true
+  environments:
+    - staging
+    - development
+  autoExecuteActions:
+    - stop_instance
+    - delete_unattached_volume
+    - release_unattached_eip
+    - resize_gp2_to_gp3
+  maintenanceWindows:
+    - name: weeknight-staging
+      days: [mon, tue, wed, thu]
+      startUtc: "06:00"
+      durationMinutes: 120
+      environments:
+        - staging
+    - name: weekend-development
+      days: [sat]
+      startUtc: "02:00"
+      durationMinutes: 240
+      environments:
+        - development
+  maxConcurrentChanges: 5
+  maxMonthlyImpact: 15000
+  validationWindowMinutes: 60
+  autoRollback: true
+
+governance:
+  productionChangesRequireApproval: true
+  minApprovals: 1
+  approverRoles:
+    - tenant_admin
+    - architect
+  segregationOfDuties: true
+  changeManagementSystem: jira-service-management
+  changeFreezeWindows:
+    - black-friday
+    - cyber-monday
+    - end-of-year-holiday
+  policyPack: balanced
+
+security:
+  awsAccessMode: assume_role
+  complianceFrameworks:
+    - pci-dss
+    - soc2
+  dataResidency:
+    - us
+    - eu
+  encryptionRequired: true
+  ssoProvider: okta
+  auditRetentionDays: 2555
+  piiHandling: tokenized-at-edge
+
+observability:
+  metricsSources:
+    - cloudwatch
+    - prometheus
+  prometheusEndpoint: https://prometheus.internal.meridianretail.example
+  otelEndpoint: https://otel-collector.internal.meridianretail.example:4317
+  tracingEnabled: true
+  logRetentionDays: 90
+
+notifications:
+  channels:
+    - name: payments-team-slack
+      type: slack
+      target: "#payments-alerts"
+      secretRef: notify/slack/payments-webhook
+      severities:
+        - medium
+        - high
+        - critical
+    - name: platform-oncall-email
+      type: email
+      target: platform-oncall@meridianretail.example
+      severities:
+        - critical
+    - name: finops-weekly-webhook
+      type: webhook
+      target: https://internal.meridianretail.example/hooks/cloudoptix-finops
+      secretRef: notify/webhook/finops-hmac
+  subscriptions:
+    cost_slo_breach:
+      - payments-team-slack
+      - finops-weekly-webhook
+    execution_rollback:
+      - platform-oncall-email
+      - payments-team-slack
+  quietHoursUtc: "07:00-13:00"
+
+teams:
+  - name: payments
+    contact: payments-team@meridianretail.example
+    owns:
+      - checkout-api
+      - checkout-db
+      - checkout-events
+    members:
+      - email: priya.natarajan@meridianretail.example
+        name: Priya Natarajan
+        roles:
+          - tenant_admin
+          - architect
+      - email: dan.osei@meridianretail.example
+        name: Dan Osei
+        roles:
+          - developer
+      - email: felicia.wu@meridianretail.example
+        name: Felicia Wu
+        roles:
+          - finops_analyst
+  - name: platform
+    contact: platform-team@meridianretail.example
+    owns:
+      - shared-networking
+      - shared-observability
+    members:
+      - email: marcus.hale@meridianretail.example
+        name: Marcus Hale
+        roles:
+          - sre
+          - auditor

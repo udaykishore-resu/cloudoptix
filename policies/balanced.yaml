@@ -1,0 +1,106 @@
+# balanced.yaml — the platform default.
+#
+# Intent: unambiguous waste — the class of finding almost nobody disputes
+# once they see it (an idle instance, an unattached volume nobody claimed,
+# log retention set to "forever" by default) — auto-executes in
+# non-production, where the cost of being wrong is a few minutes of
+# re-provisioning, not an incident. The same waste findings in production
+# still require one approval: the underlying change is just as safe, but
+# production is where CloudOptix has not yet earned the trust to act alone.
+# Everything that is not unambiguous waste — rightsizing, storage class
+# changes, network topology, anything touching a critical service — always
+# requires approval, in every environment, because "unambiguous" is doing a
+# lot of work in that first sentence and this pack only extends autonomy to
+# the narrow slice of findings where it is actually true.
+#
+# The auto_execute rules below are live: govern.Evaluate selects the most
+# restrictive effect among the rules that matched, independently of
+# default_effect, so a matching auto_execute rule decides the outcome. What
+# it cannot override is the platform's own guards — destructive actions,
+# the tenant's automation switch, an exhausted error budget — which are
+# applied after this policy and are documented in policies/README.md.
+name: balanced
+description: >-
+  Unambiguous waste auto-executes in non-production. Everything else, and
+  every production change, requires one approval. The default pack for a
+  tenant that has not chosen a different risk posture.
+version: 1
+enabled: true
+default_effect: require_approval
+
+rules:
+  - id: balanced.waste.non-production.auto
+    description: >-
+      Clear-cut waste elimination in a non-production environment executes
+      without waiting for a human: stopping an idle instance, releasing an
+      unattached elastic IP, tightening log retention, cleaning up
+      abandoned multipart uploads, and removing provisioned concurrency
+      nobody is using.
+    match:
+      categories: [waste]
+      actions:
+        - stop_instance
+        - release_elastic_ip
+        - abort_multipart_uploads
+        - set_log_retention
+        - remove_provisioned_concurrency
+        - schedule_shutdown
+      environments: [development, staging, sandbox, test]
+      min_confidence: 0.85
+      max_risk_level: LOW
+      max_critical_services: 0
+      min_reversibility: fast
+    effect: auto_execute
+    reason: >-
+      Waste findings this specific, this reversible, and this far from
+      production do not need a human in the loop every time; they need one
+      to have set this rule up correctly once.
+
+  - id: balanced.waste.production.approval
+    description: The same waste findings, when the resource is in production, wait for one approval.
+    match:
+      categories: [waste]
+      environments: [production, dr]
+    effect: require_approval
+    min_approvals: 1
+    approvers: [platform-admin]
+    reason: >-
+      The change itself is exactly as safe as its non-production
+      counterpart; production is where this pack still asks a person to
+      look first.
+
+  - id: balanced.rightsizing.always-approval
+    description: >-
+      Rightsizing changes resource capacity rather than removing it — a
+      wrong estimate degrades performance instead of merely costing a few
+      minutes to reverse — so it always waits for approval, everywhere.
+    match:
+      categories: [rightsizing]
+    effect: require_approval
+    min_approvals: 1
+    reason: >-
+      A rightsizing miscalculation shows up as latency or an OOM under
+      real load, not as an obviously-wrong dashboard number; a human
+      should sanity-check the target size against the workload before it
+      changes.
+
+  - id: balanced.destructive.always-approval
+    description: Destructive actions always require approval under this pack, in every environment.
+    match:
+      actions:
+        - terminate_instance
+        - delete_volume
+        - delete_snapshot
+        - deregister_ami
+        - remove_rds_replica
+        - remove_nat_gateway
+    effect: require_approval
+    min_approvals: 1
+    reason: Restated for reviewer legibility — see conservative.yaml's identical rule for why.
+
+  - id: balanced.advisory.never-planned
+    description: Architecture recommendations are shown, never planned or executed.
+    match:
+      actions: [advisory_only]
+    effect: advisory_only
+    reason: This action class has no executor; it exists to inform a human's own change.

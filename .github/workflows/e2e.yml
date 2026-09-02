@@ -1,0 +1,107 @@
+name: E2E
+
+# Brings up the full docker-compose stack (deployments/docker-compose.yml)
+# and drives the demo flow against it: wait for health, then hit the API's
+# own endpoints to read back the demo tenant the API seeded on boot.
+#
+# The stack needs no AWS credentials and no LLM API key: the compose file
+# selects the simulated AWS estate and the deterministic model provider,
+# both of which are real runtime modes rather than test doubles (see
+# deployments/docker-compose.yml's header and docs/adr/0007).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: docker compose up & demo flow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker compose build
+        run: docker compose -f deployments/docker-compose.yml build
+
+      - name: docker compose up
+        run: docker compose -f deployments/docker-compose.yml up -d
+
+      - name: wait for API health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
+              echo "API healthy after ${i}0s"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::API never became healthy"
+          docker compose -f deployments/docker-compose.yml logs
+          exit 1
+
+      - name: demo flow smoke test
+        # Endpoints and response shapes below come from
+        # internal/transport/http/routes.go and are asserted end to end by
+        # tests/e2e/demo_flow_test.go against the same composition root this
+        # container runs. This step's job is narrower: prove the containerized
+        # deployment — image, config, migrations, network — actually works.
+        env:
+          API_BASE: http://localhost:8080
+          TOKEN: dev-local-token-not-a-secret # matches docker-compose.yml's CLOUDOPTIX_AUTH_DEV_STATIC_TOKEN, a dev-only static bearer token, not a real credential
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json")
+
+          echo "== readiness (storage, cache, llm, simulated estate) =="
+          curl -fsS "${API_BASE}/readyz" | tee readyz.json
+          python3 -c "import json;d=json.load(open('readyz.json'));assert d['status']=='ok',d"
+
+          echo "== the API seeded the demo tenant on boot (--seed-demo) =="
+          curl -fsS "${auth[@]}" "${API_BASE}/api/v1/aws-accounts" | tee accounts.json
+          python3 -c "
+          import json
+          d = json.load(open('accounts.json'))
+          items = d if isinstance(d, list) else d.get('items', d.get('accounts', []))
+          assert items, 'no AWS account is connected; --seed-demo did not run'
+          assert items[0]['access_mode'] == 'simulated', items[0]
+          print('connected account', items[0]['account_id'])
+          "
+
+          echo "== discovery found the simulated estate =="
+          curl -fsS "${auth[@]}" "${API_BASE}/api/v1/discovery/status" | tee discovery.json
+          python3 -c "
+          import json
+          d = json.load(open('discovery.json'))
+          assert d['resource_count'] > 0, d
+          print('discovered', d['resource_count'], 'resources')
+          "
+
+          echo "== the optimization engine produced recommendations =="
+          curl -fsS "${auth[@]}" "${API_BASE}/api/v1/recommendations/summary" | tee summary.json
+          python3 -c "
+          import json
+          d = json.load(open('summary.json'))
+          assert d['open'] > 0, 'no open recommendations against a deliberately wasteful estate'
+          print('open recommendations:', d['open'], 'worth', d['total_monthly_saving']['display'], '/month')
+          "
+
+          echo "== the OpenAPI document the image serves matches the running API =="
+          curl -fsS "${API_BASE}/openapi.yaml" | head -1 | grep -q '^openapi:'
+
+      - name: dump logs on failure
+        if: failure()
+        run: docker compose -f deployments/docker-compose.yml logs
+
+      - name: tear down
+        if: always()
+        run: docker compose -f deployments/docker-compose.yml down -v

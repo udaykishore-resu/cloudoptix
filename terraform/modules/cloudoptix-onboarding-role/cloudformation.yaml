@@ -1,0 +1,372 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudOptix onboarding roles (one-click stack equivalent of
+  terraform/modules/cloudoptix-onboarding-role). Creates up to four IAM
+  roles CloudOptix assumes via sts:AssumeRole to inventory, analyze, plan
+  against, and (only if you enable it) change resources in this account.
+  See that Terraform module's README.md for what each role's action list
+  is for, action by action — this template's action lists are kept in
+  sync with it and with internal/application/onboarding/iam.go by hand;
+  if you maintain both, diff them on every change to either.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: CloudOptix connection details (from your onboarding screen)
+        Parameters:
+          - TenantSlug
+          - ExternalId
+          - CloudOptixPrincipalArn
+      - Label:
+          default: What to grant
+        Parameters:
+          - EnableReadRole
+          - EnableAnalyzeRole
+          - EnablePlanRole
+          - EnableExecuteRole
+      - Label:
+          default: Optional guardrails
+        Parameters:
+          - PermissionsBoundaryArn
+          - MaxSessionDurationSeconds
+    ParameterLabels:
+      TenantSlug:
+        default: CloudOptix tenant slug
+      ExternalId:
+        default: CloudOptix-issued external ID
+      CloudOptixPrincipalArn:
+        default: CloudOptix platform principal ARN
+
+Parameters:
+  TenantSlug:
+    Type: String
+    Description: >
+      Your CloudOptix tenant identifier, as shown on the onboarding screen.
+      Embedded in every role name as CloudOptix-<TenantSlug>-<Scope>.
+    AllowedPattern: "^[a-zA-Z0-9-]{1,32}$"
+    ConstraintDescription: 1-32 characters, alphanumeric and hyphens only.
+
+  ExternalId:
+    Type: String
+    Description: >
+      The external ID CloudOptix generated for your account. Required on
+      every AssumeRole call CloudOptix makes here — the confused-deputy
+      defence. Never accept a role-assumption request that omits it.
+    NoEcho: true
+    MinLength: 8
+
+  CloudOptixPrincipalArn:
+    Type: String
+    Description: >
+      The AWS principal (root or a specific role ARN) CloudOptix assumes
+      these roles from. Ask your CloudOptix contact if you were not given
+      one on the onboarding screen — do not guess an account ID.
+    AllowedPattern: "^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:(root|role/.+)$"
+
+  EnableReadRole:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Inventory discovery — the minimum needed for CloudOptix to function at all.
+
+  EnableAnalyzeRole:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Cost Explorer, CloudWatch metrics, Pricing API — powers cost/utilization analysis.
+
+  EnablePlanRole:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Read-only/DryRun-only simulation of proposed changes.
+
+  EnableExecuteRole:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      The only role that can change anything. Defaults to false — enable
+      once you are ready for CloudOptix's automation to actually act on
+      approved recommendations.
+
+  PermissionsBoundaryArn:
+    Type: String
+    Default: ""
+    Description: Optional IAM permissions boundary ARN applied to every role created. Leave blank for none.
+
+  MaxSessionDurationSeconds:
+    Type: Number
+    Default: 3600
+    MinValue: 3600
+    MaxValue: 43200
+    Description: Upper bound on an assumed session's lifetime. CloudOptix requests 55-minute sessions; the 3600 default is already generous headroom.
+
+Conditions:
+  HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundaryArn, ""]]
+  CreateReadRole: !Equals [!Ref EnableReadRole, "true"]
+  CreateAnalyzeRole: !Equals [!Ref EnableAnalyzeRole, "true"]
+  CreatePlanRole: !Equals [!Ref EnablePlanRole, "true"]
+  CreateExecuteRole: !Equals [!Ref EnableExecuteRole, "true"]
+
+Resources:
+  ReadRole:
+    Type: AWS::IAM::Role
+    Condition: CreateReadRole
+    Properties:
+      RoleName: !Sub "CloudOptix-${TenantSlug}-Read"
+      Description: "CloudOptix read-tier onboarding role — inventory discovery only. See the Terraform module README for the action-by-action rationale."
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref "AWS::NoValue"]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudOptixPrincipalArn
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "sts:ExternalId": !Ref ExternalId
+      Policies:
+        - PolicyName: !Sub "CloudOptix-${TenantSlug}-Read"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudOptixRead
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - "ec2:Describe*"
+                  - "rds:Describe*"
+                  - "rds:ListTagsForResource"
+                  - "s3:ListAllMyBuckets"
+                  - "s3:GetBucketLocation"
+                  - "s3:GetBucketTagging"
+                  - "s3:GetBucketLifecycleConfiguration"
+                  - "lambda:List*"
+                  - "lambda:GetFunction*"
+                  - "ecs:Describe*"
+                  - "ecs:List*"
+                  - "eks:Describe*"
+                  - "eks:List*"
+                  - "elasticloadbalancing:Describe*"
+                  - "autoscaling:Describe*"
+                  - "dynamodb:Describe*"
+                  - "dynamodb:List*"
+                  - "elasticache:Describe*"
+                  - "tag:GetResources"
+                  - "tag:GetTagKeys"
+                  - "tag:GetTagValues"
+                  - "organizations:ListAccounts"
+                  - "organizations:DescribeOrganization"
+      Tags:
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: CloudOptixRole, Value: onboarding }
+        - { Key: Tenant, Value: !Ref TenantSlug }
+        - { Key: Scope, Value: read }
+
+  AnalyzeRole:
+    Type: AWS::IAM::Role
+    Condition: CreateAnalyzeRole
+    Properties:
+      RoleName: !Sub "CloudOptix-${TenantSlug}-Analyze"
+      Description: "CloudOptix analyze-tier onboarding role — read + Cost Explorer/CloudWatch/Pricing. See the Terraform module README for the action-by-action rationale."
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref "AWS::NoValue"]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudOptixPrincipalArn
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "sts:ExternalId": !Ref ExternalId
+      Policies:
+        - PolicyName: !Sub "CloudOptix-${TenantSlug}-Analyze"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudOptixAnalyze
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - "ec2:Describe*"
+                  - "rds:Describe*"
+                  - "rds:ListTagsForResource"
+                  - "s3:ListAllMyBuckets"
+                  - "s3:GetBucketLocation"
+                  - "s3:GetBucketTagging"
+                  - "s3:GetBucketLifecycleConfiguration"
+                  - "lambda:List*"
+                  - "lambda:GetFunction*"
+                  - "ecs:Describe*"
+                  - "ecs:List*"
+                  - "eks:Describe*"
+                  - "eks:List*"
+                  - "elasticloadbalancing:Describe*"
+                  - "autoscaling:Describe*"
+                  - "dynamodb:Describe*"
+                  - "dynamodb:List*"
+                  - "elasticache:Describe*"
+                  - "tag:GetResources"
+                  - "tag:GetTagKeys"
+                  - "tag:GetTagValues"
+                  - "organizations:ListAccounts"
+                  - "organizations:DescribeOrganization"
+                  - "ce:GetCostAndUsage"
+                  - "ce:GetCostForecast"
+                  - "ce:GetReservationUtilization"
+                  - "ce:GetSavingsPlansUtilization"
+                  - "ce:GetRightsizingRecommendation"
+                  - "cur:DescribeReportDefinitions"
+                  - "cloudwatch:GetMetricData"
+                  - "cloudwatch:GetMetricStatistics"
+                  - "cloudwatch:ListMetrics"
+                  - "pricing:GetProducts"
+                  - "pricing:DescribeServices"
+                  - "compute-optimizer:Get*"
+      Tags:
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: CloudOptixRole, Value: onboarding }
+        - { Key: Tenant, Value: !Ref TenantSlug }
+        - { Key: Scope, Value: analyze }
+
+  PlanRole:
+    Type: AWS::IAM::Role
+    Condition: CreatePlanRole
+    Properties:
+      RoleName: !Sub "CloudOptix-${TenantSlug}-Plan"
+      Description: "CloudOptix plan-tier onboarding role — read + read-only/DryRun-only simulation. See the Terraform module README for the action-by-action rationale."
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref "AWS::NoValue"]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudOptixPrincipalArn
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "sts:ExternalId": !Ref ExternalId
+      Policies:
+        - PolicyName: !Sub "CloudOptix-${TenantSlug}-Plan"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudOptixPlan
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - "ec2:Describe*"
+                  - "rds:Describe*"
+                  - "rds:ListTagsForResource"
+                  - "s3:ListAllMyBuckets"
+                  - "s3:GetBucketLocation"
+                  - "s3:GetBucketTagging"
+                  - "s3:GetBucketLifecycleConfiguration"
+                  - "lambda:List*"
+                  - "lambda:GetFunction*"
+                  - "ecs:Describe*"
+                  - "ecs:List*"
+                  - "eks:Describe*"
+                  - "eks:List*"
+                  - "elasticloadbalancing:Describe*"
+                  - "autoscaling:Describe*"
+                  - "dynamodb:Describe*"
+                  - "dynamodb:List*"
+                  - "elasticache:Describe*"
+                  - "tag:GetResources"
+                  - "tag:GetTagKeys"
+                  - "tag:GetTagValues"
+                  - "organizations:ListAccounts"
+                  - "organizations:DescribeOrganization"
+                  - "ec2:DescribeInstanceAttribute"
+                  - "pricing:GetProducts"
+                  - "compute-optimizer:GetEC2InstanceRecommendations"
+                  - "compute-optimizer:GetRDSDatabaseRecommendations"
+      Tags:
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: CloudOptixRole, Value: onboarding }
+        - { Key: Tenant, Value: !Ref TenantSlug }
+        - { Key: Scope, Value: plan }
+
+  ExecuteRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecuteRole
+    Properties:
+      RoleName: !Sub "CloudOptix-${TenantSlug}-Execute"
+      Description: "CloudOptix execute-tier onboarding role — the only role that can change a resource. See the Terraform module README for the per-action-type rationale."
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref "AWS::NoValue"]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudOptixPrincipalArn
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "sts:ExternalId": !Ref ExternalId
+      Policies:
+        - PolicyName: !Sub "CloudOptix-${TenantSlug}-Execute"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudOptixExecute
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - "ec2:ModifyInstanceAttribute"
+                  - "ec2:StopInstances"
+                  - "ec2:StartInstances"
+                  - "ec2:TerminateInstances"
+                  - "ec2:DeleteVolume"
+                  - "ec2:ModifyVolume"
+                  - "ec2:DeleteSnapshot"
+                  - "ec2:DeregisterImage"
+                  - "ec2:ReleaseAddress"
+                  - "ec2:CreateFleet"
+                  - "ec2:CreateVpcEndpoint"
+                  - "ec2:DeleteNatGateway"
+                  - "rds:ModifyDBInstance"
+                  - "rds:DeleteDBInstance"
+                  - "rds:StopDBInstance"
+                  - "rds:StartDBInstance"
+                  - "s3:PutBucketLifecycleConfiguration"
+                  - "s3:AbortMultipartUpload"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:ListBucketMultipartUploads"
+                  - "logs:PutRetentionPolicy"
+                  - "lambda:UpdateFunctionConfiguration"
+                  - "lambda:DeleteProvisionedConcurrencyConfig"
+                  - "eks:UpdateNodegroupConfig"
+                  - "eks:DescribeCluster"
+                  - "autoscaling:UpdateAutoScalingGroup"
+                  - "ce:GetSavingsPlansPurchaseRecommendation"
+                  - "savingsplans:CreateSavingsPlan"
+                  - "dynamodb:UpdateTable"
+      Tags:
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: CloudOptixRole, Value: onboarding }
+        - { Key: Tenant, Value: !Ref TenantSlug }
+        - { Key: Scope, Value: execute }
+
+Outputs:
+  ReadRoleArn:
+    Condition: CreateReadRole
+    Value: !GetAtt ReadRole.Arn
+  AnalyzeRoleArn:
+    Condition: CreateAnalyzeRole
+    Value: !GetAtt AnalyzeRole.Arn
+  PlanRoleArn:
+    Condition: CreatePlanRole
+    Value: !GetAtt PlanRole.Arn
+  ExecuteRoleArn:
+    Condition: CreateExecuteRole
+    Value: !GetAtt ExecuteRole.Arn

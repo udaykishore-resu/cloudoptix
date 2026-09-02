@@ -1,0 +1,124 @@
+# Full local stack: Postgres, Redis, the API, one worker, and the
+# frontend — no AWS credentials and no LLM API key required.
+#
+# Two settings carry the "no credentials" property, and both are real
+# configuration read by internal/app's composition root rather than
+# placeholders: CLOUDOPTIX_LLM_PROVIDER=scripted selects the deterministic
+# model provider, and CLOUDOPTIX_AWS_MODE=simulated points every discoverer,
+# cost ingestor, metric collector and executor at internal/adapters/awssim's
+# in-memory estate. Both are refused in production by
+# internal/infrastructure/config.Config.Validate, so this file cannot be
+# promoted into a real environment by accident.
+#
+# The API seeds the demo tenant on boot (--seed-demo) and the seed is
+# idempotent, so `docker compose restart api` does not create a second one.
+#
+# Run: docker compose -f deployments/docker-compose.yml up --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cloudoptix
+      POSTGRES_USER: cloudoptix
+      POSTGRES_PASSWORD: cloudoptix-local-dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudoptix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "cloudoptix-local-dev"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "cloudoptix-local-dev", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        VERSION: local
+    command: ["--seed-demo"]
+    ports:
+      - "8080:8080"
+    environment: &api-environment
+      CLOUDOPTIX_ENVIRONMENT: development
+      CLOUDOPTIX_SERVER_HOST: "0.0.0.0"
+      CLOUDOPTIX_SERVER_PORT: "8080"
+      CLOUDOPTIX_STORAGE: postgres
+      CLOUDOPTIX_CACHE: redis
+      CLOUDOPTIX_EVENTS: inprocess
+      CLOUDOPTIX_DATABASE_HOST: postgres
+      CLOUDOPTIX_DATABASE_PORT: "5432"
+      CLOUDOPTIX_DATABASE_NAME: cloudoptix
+      CLOUDOPTIX_DATABASE_USER: cloudoptix
+      CLOUDOPTIX_DATABASE_PASSWORD: cloudoptix-local-dev
+      CLOUDOPTIX_REDIS_ADDRS: redis:6379
+      CLOUDOPTIX_REDIS_PASSWORD: cloudoptix-local-dev
+      CLOUDOPTIX_LLM_PROVIDER: scripted
+      CLOUDOPTIX_LLM_MODEL: claude-scripted-v1
+      CLOUDOPTIX_TELEMETRY_LOG_LEVEL: debug
+      CLOUDOPTIX_TELEMETRY_LOG_FORMAT: text
+      CLOUDOPTIX_AUTH_DEV_STATIC_TOKEN_ENABLED: "true"
+      CLOUDOPTIX_AUTH_DEV_STATIC_TOKEN: "dev-local-token-not-a-secret"
+      CLOUDOPTIX_AWS_MODE: simulated
+      CLOUDOPTIX_AWS_REGION: us-east-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # The distroless base ships no shell, wget or curl, so the check runs
+      # a binary that is in the image: `coptx version` exits 0 only if the
+      # image's own Go runtime and filesystem are intact. It is a liveness
+      # check on the container, not on the API — the API's own readiness is
+      # GET /readyz, which the orchestrator (not compose) polls.
+      test: ["CMD", "/app/coptx", "version"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        VERSION: local
+    entrypoint: ["/app/cloudoptix-worker"]
+    command: ["--workers=discovery,cost,optimization,validation,notification,learning"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deployments/docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:

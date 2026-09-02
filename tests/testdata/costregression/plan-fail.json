@@ -1,0 +1,55 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "variables": {"environment": {"value": "production"}, "region": {"value": "us-east-1"}},
+  "resource_changes": [
+    {
+      "address": "module.network.aws_nat_gateway.az_a",
+      "module_address": "module.network",
+      "type": "aws_nat_gateway",
+      "name": "az_a",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"subnet_id": "subnet-0pub1a", "tags": {"Application": "platform", "Team": "platform", "Environment": "production"}}
+      }
+    },
+    {
+      "address": "module.network.aws_nat_gateway.az_b",
+      "module_address": "module.network",
+      "type": "aws_nat_gateway",
+      "name": "az_b",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"subnet_id": "subnet-0pub1b", "tags": {"Application": "platform", "Team": "platform", "Environment": "production"}}
+      }
+    },
+    {
+      "address": "module.analytics.aws_instance.warehouse",
+      "module_address": "module.analytics",
+      "type": "aws_instance",
+      "name": "warehouse",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {"instance_type": "m5.large", "tags": {"Application": "analytics-batch", "Team": "data", "Environment": "production"}},
+        "after": {"instance_type": "r5.8xlarge", "tags": {"Application": "analytics-batch", "Team": "data", "Environment": "production"}}
+      }
+    },
+    {
+      "address": "module.analytics.aws_ebs_volume.scratch",
+      "module_address": "module.analytics",
+      "type": "aws_ebs_volume",
+      "name": "scratch",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"type": "io2", "size": 2000, "iops": 20000}
+      }
+    }
+  ]
+}

@@ -1,0 +1,374 @@
+# Default values for cloudoptix. See README.md for what every key here
+# means and why its default is what it is — this file's own comments are
+# intentionally short; the README is the actual documentation.
+#
+# Layering convention: values.yaml holds every key with a safe, generic
+# default. values-dev.yaml and values-production.yaml are PARTIAL overlays
+# (`helm upgrade -f values.yaml -f values-production.yaml`) — they only set
+# what actually differs for that environment, never a full copy of this
+# file, so a new key added here is never silently missing from an overlay.
+
+global:
+  environment: production # matches internal/infrastructure/config.Config.Environment — gates the dev static-token issuer and permissive CORS the same way that config's own Validate() does
+  imageRegistry: ghcr.io/udaykishore-resu/cloudoptix
+  imageTag: "" # defaults to .Chart.AppVersion when empty
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# The chart does not create the namespace itself (helm install -n cloudoptix
+# --create-namespace is the operator's job) — but every IRSA trust policy
+# terraform/modules/security renders is scoped to this exact namespace via
+# the ServiceAccount subject condition, so it must match whatever namespace
+# you actually install into.
+namespace: cloudoptix
+
+# ---------------------------------------------------------------------------
+# Application configuration — every key here maps to one environment
+# variable internal/infrastructure/config/config.go reads (see that file's
+# envBindings()). Rendered into a ConfigMap (templates/configmap.yaml) and
+# consumed via envFrom, never as literal values baked into a Deployment
+# spec, so `helm diff`/`kubectl diff` shows a config change as a config
+# change, not buried in five near-identical Deployment diffs.
+# ---------------------------------------------------------------------------
+config:
+  environment: production
+  server:
+    host: "0.0.0.0"
+    port: 8080
+    tlsEnabled: false # TLS terminates at the ALB (see ingress.tls) — pod-to-ALB traffic inside the cluster is plaintext HTTP on the ClusterIP Service, which is the standard AWS ALB Ingress pattern
+    corsAllowedOrigins: []
+  database:
+    host: "" # set per-environment — the RDS module's cluster_endpoint output
+    port: 5432
+    name: cloudoptix
+    user: cloudoptix
+    sslMode: require
+  redis:
+    addrs: [] # set per-environment — the redis module's primary_endpoint output, e.g. ["cloudoptix-production.xxxxxx.cache.amazonaws.com:6379"]
+    tlsEnabled: true
+  aws:
+    region: us-east-1
+  llm:
+    provider: scripted # anthropic|bedrock|scripted — Validate() refuses "scripted" when environment=production, so production overlays MUST set this to anthropic or bedrock
+    model: claude-scripted-v1
+  telemetry:
+    logLevel: info
+    logFormat: json
+    tracingEnabled: true
+    traceSampleRatio: 0.1
+    otlpEndpoint: "" # the in-cluster ADOT collector Service, if deployed — see terraform/modules/observability
+  auth:
+    oidcIssuerUrl: ""
+    oidcAudience: ""
+    devStaticTokenEnabled: false # values-dev.yaml only — Validate() hard-refuses this when environment=production regardless of what this chart sets
+  features:
+    autonomousExecution: false
+    costCompiler: true
+    copilot: true
+    savingsLearning: true
+    sseStreaming: true
+  worker:
+    discoveryConcurrency: 8
+    executionConcurrency: 4
+    pollInterval: 5s
+    lockTTL: 5m
+    maxJobAttempts: 5
+    notificationBatchSize: 50
+
+# ---------------------------------------------------------------------------
+# Secrets. Two modes, picked by secrets.externalSecrets.enabled:
+#
+#  - true (staging/production): templates/externalsecret.yaml renders one
+#    ExternalSecret per credential, syncing from whatever SecretStore/
+#    ClusterSecretStore secrets.externalSecrets.secretStoreRef names (AWS
+#    Secrets Manager, in the terraform modules' case) into a k8s Secret this
+#    chart's Deployments already know how to consume. No secret value is
+#    ever a Helm value in this mode.
+#
+#  - false (dev/local only): templates/secret.yaml renders a plain Secret
+#    directly from secrets.values.* — convenient for a local kind/minikube
+#    cluster, never for a real environment. values-production.yaml does not
+#    (and must not) set secrets.values to anything real.
+# ---------------------------------------------------------------------------
+secrets:
+  externalSecrets:
+    enabled: false
+    secretStoreRef:
+      name: cloudoptix-secret-store
+      kind: ClusterSecretStore
+    refreshInterval: 1h
+    database: { remoteRef: "", property: "" } # e.g. remoteRef "cloudoptix-production/database-password" (security module's plain secret) or the RDS-managed secret ARN with property "password" (terraform/modules/rds's master_user_secret_arn — see that module's README)
+    redis: { remoteRef: "" }
+    awsExternalId: { remoteRef: "" }
+    llmApiKey: { remoteRef: "" }
+    authServiceToken: { remoteRef: "" }
+  values:
+    databasePassword: ""
+    redisPassword: ""
+    awsExternalId: ""
+    llmApiKey: ""
+    authServiceToken: ""
+
+# ---------------------------------------------------------------------------
+# Components — the API and five workers, each an independent Deployment
+# with its own scaling, resources and health checks. templates/deployment.yaml
+# ranges over this map once rather than six near-duplicate template files,
+# so every component's Deployment shape is guaranteed identical except for
+# the values that are supposed to differ.
+#
+# `command` names which of the image's three binaries a component runs
+# (/app/cloudoptix-api, /app/cloudoptix-worker, /app/coptx — see
+# deployments/docker/Dockerfile) and `args` carries that binary's own flags.
+# The two are separate because the image's ENTRYPOINT is the API: a worker
+# component has to replace it, not append to it, and appending "worker" to
+# the API's argv would be silently accepted as a stray positional argument
+# rather than rejected.
+# ---------------------------------------------------------------------------
+components:
+  api:
+    enabled: true
+    kind: api
+    image: {}
+    replicaCount: 3
+    command: ["/app/cloudoptix-api"]
+    args: []
+    containerPort: 8080
+    service:
+      port: 80
+    resources:
+      requests: { cpu: 250m, memory: 256Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 12
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+    pdb:
+      enabled: true
+      minAvailable: 2
+    serviceAccount:
+      roleArn: "" # terraform/modules/security's component_role_arns["api"]
+    extraEnv: []
+
+  workerDiscovery:
+    enabled: true
+    kind: worker
+    image: {}
+    workerKind: discovery
+    replicaCount: 2
+    command: ["/app/cloudoptix-worker"]
+    args: ["--workers=discovery"]
+    containerPort: 8081
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 20
+      targetCPUUtilizationPercentage: 75
+    pdb:
+      enabled: true
+      minAvailable: 1
+    serviceAccount:
+      roleArn: ""
+    extraEnv: []
+
+  workerOptimization:
+    enabled: true
+    kind: worker
+    image: {}
+    workerKind: optimization
+    replicaCount: 2
+    command: ["/app/cloudoptix-worker"]
+    args: ["--workers=optimization"]
+    containerPort: 8081
+    resources:
+      requests: { cpu: 250m, memory: 384Mi } # the compiler/pricing/rightsizing passes are more CPU-hungry than a pure I/O-bound discovery scan
+      limits: { cpu: "1", memory: 768Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 75
+    pdb:
+      enabled: true
+      minAvailable: 1
+    serviceAccount:
+      roleArn: ""
+    extraEnv: []
+
+  workerAutomation:
+    enabled: true
+    kind: worker
+    image: {}
+    workerKind: automation
+    replicaCount: 2
+    command: ["/app/cloudoptix-worker"]
+    args: ["--workers=automation"]
+    containerPort: 8081
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 8 # deliberately lower ceiling than discovery — this worker calls mutating AWS APIs; scaling it aggressively scales blast radius, not just throughput
+      targetCPUUtilizationPercentage: 75
+    pdb:
+      enabled: true
+      minAvailable: 1
+    serviceAccount:
+      roleArn: ""
+    extraEnv: []
+
+  workerValidation:
+    enabled: true
+    kind: worker
+    image: {}
+    workerKind: validation
+    replicaCount: 1
+    command: ["/app/cloudoptix-worker"]
+    args: ["--workers=validation"]
+    containerPort: 8081
+    resources:
+      requests: { cpu: 150m, memory: 192Mi }
+      limits: { cpu: 500m, memory: 384Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 75
+    pdb:
+      enabled: false # single-replica-tolerant workload; a PDB with minAvailable on a 1-replica default would block every voluntary eviction
+    serviceAccount:
+      roleArn: ""
+    extraEnv: []
+
+  workerNotification:
+    enabled: true
+    kind: worker
+    image: {}
+    workerKind: notification
+    replicaCount: 1
+    command: ["/app/cloudoptix-worker"]
+    args: ["--workers=notification"]
+    containerPort: 8081
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 250m, memory: 256Mi }
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 75
+    pdb:
+      enabled: false
+    serviceAccount:
+      roleArn: ""
+    extraEnv: []
+
+# ---------------------------------------------------------------------------
+# Migration job — a pre-install/pre-upgrade Helm hook that applies the
+# embedded migrations (migrations/embed.go) before any new Deployment
+# revision rolls out, so a pod never starts against a schema it doesn't
+# expect.
+#
+# It runs cloudoptix-api with --migrate-only: the API applies migrations at
+# startup anyway (internal/app/storage.go), so a separate migrate binary
+# would be a second implementation of the same step that could drift from
+# the one that actually matters. --migrate-only reuses that exact code path
+# and exits instead of listening.
+#
+# It is disabled by default: with the API migrating on startup, the hook
+# only earns its keep in a deployment running several API replicas, where
+# it makes the schema change happen once, before any of them start, rather
+# than racing (the migrator takes an advisory lock, so the race is safe but
+# noisy). Enable it there.
+# ---------------------------------------------------------------------------
+migration:
+  enabled: false
+  command: ["/app/cloudoptix-api"]
+  args: ["--migrate-only"]
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  serviceAccount:
+    roleArn: "" # typically the same role as api's — migrations need the same database credential path
+
+ingress:
+  enabled: true
+  className: alb
+  wafAclArn: "" # terraform/modules/security's waf_web_acl_arn output
+  host: ""
+  tls:
+    enabled: true
+    secretName: "" # ACM cert instead, typically — see the alb.ingress.kubernetes.io/certificate-arn annotation this template sets from ingress.certificateArn
+  certificateArn: ""
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+  # Namespace(s) allowed to scrape /metrics beyond the release namespace
+  # itself (e.g. a cluster-wide "monitoring" namespace running Prometheus).
+  monitoringNamespaceLabels:
+    kubernetes.io/metadata.name: monitoring
+
+serviceMonitor:
+  enabled: true
+  namespace: "" # defaults to the release namespace
+  interval: 30s
+  labels: {} # match your Prometheus Operator's serviceMonitorSelector
+
+prometheusRule:
+  enabled: true
+  namespace: ""
+  labels: {}
+  # SLO thresholds the rendered PrometheusRule alerts on — see
+  # templates/prometheusrule.yaml and this chart's README for the full
+  # rule list.
+  errorRateThreshold: "0.05" # 5% of requests over 5xx over 5m
+  latencyP99ThresholdSeconds: "2"
+  discoveryCoverageThreshold: "0.9"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532 # distroless nonroot's fixed uid — see deployments/docker/Dockerfile
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# emptyDir volumes mounted wherever the app needs to write anything at all
+# under a read-only root filesystem — /tmp, primarily.
+extraVolumes:
+  - name: tmp
+    emptyDir: {}
+extraVolumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelectorFromComponent: true # templates fill in matchLabels from the component's own selector labels
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  # Base annotations merged onto every component's ServiceAccount, ahead of
+  # that component's own serviceAccount.roleArn (eks.amazonaws.com/role-arn
+  # is always set per-component — see templates/serviceaccount.yaml).
+  annotations: {}

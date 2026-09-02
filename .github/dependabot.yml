@@ -1,0 +1,148 @@
+version: 2
+
+updates:
+  # Go module dependencies (the API/worker binary and everything under
+  # internal/, third_party/ vendoring aside — Dependabot reads go.mod).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      aws-sdk:
+        patterns:
+          - "github.com/aws/aws-sdk-go-v2*"
+      otel:
+        patterns:
+          - "go.opentelemetry.io/*"
+    open-pull-requests-limit: 10
+    labels: [dependencies, go]
+
+  # Frontend (frontend/package.json).
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      next-and-react:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+      eslint:
+        patterns:
+          - "eslint*"
+          - "@typescript-eslint/*"
+    open-pull-requests-limit: 10
+    labels: [dependencies, frontend]
+
+  # Container base images (deployments/docker/Dockerfile*) — golang:,
+  # gcr.io/distroless/static-debian12, node:. A base image bump can shift
+  # what Trivy finds on the next security.yaml run, so these come as their
+  # own reviewable PRs rather than silently drifting.
+  - package-ecosystem: docker
+    directory: /deployments/docker
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docker]
+
+  # GitHub Actions used across .github/workflows/*.yml — pinning these to
+  # a known-good, Dependabot-reviewed version is the same supply-chain
+  # discipline release.yml applies to the images it signs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+
+  # Terraform providers (aws, kubernetes, helm, random, tls) referenced in
+  # every module's versions.tf. One entry per directory that actually
+  # declares required_providers — Dependabot doesn't recurse into
+  # terraform/modules/* on its own.
+  - package-ecosystem: terraform
+    directory: /terraform/modules/network
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/eks
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/rds
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/redis
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/messaging
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/storage
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/security
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/observability
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/modules/cloudoptix-onboarding-role
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/environments/dev
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/environments/staging
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/environments/production
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/demo
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]
+  - package-ecosystem: terraform
+    directory: /terraform/bootstrap
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, terraform]

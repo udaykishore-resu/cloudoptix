@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cloudoptix
+description: CloudOptix — the API, five independently-scaling workers, and the migration hook, deployed as one release.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - finops
+  - cost-optimization
+  - aws
+home: https://github.com/udaykishore-resu/cloudoptix
+maintainers:
+  - name: CloudOptix Platform Team
+sources:
+  - https://github.com/udaykishore-resu/cloudoptix
+annotations:
+  artifacthub.io/license: Apache-2.0

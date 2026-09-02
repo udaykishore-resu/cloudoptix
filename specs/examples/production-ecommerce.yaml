@@ -1,0 +1,371 @@
+# Worked example: production e-commerce platform
+#
+# A larger, multi-service e-commerce estate than the reference spec in
+# ../../v1/cloudoptix.yaml (which focuses narrowly on one application,
+# checkout-api). This example shows a spec.Business section with several
+# transactions of differing criticality, a broader workload list, and an
+# aggressive-leaning optimization posture appropriate to a company whose
+# infrastructure spend materially affects margin on a thin-margin retail
+# business. Validates against ../cloudoptix.schema.json.
+
+apiVersion: cloudoptix.io/v1
+kind: CloudOptixSpec
+
+organization:
+  name: Northfield Commerce Group
+  industry: retail
+  size: "4500 employees"
+  businessRegions:
+    - us
+    - ca
+  primaryContact: cloud-platform@northfieldcommerce.example
+
+application:
+  name: storefront-platform
+  description: >-
+    The customer-facing storefront, catalog, search, cart, checkout, and
+    order-management services that together serve northfieldcommerce.com
+    and its four regional storefront brands.
+  domain: retail-commerce
+  criticality: critical
+  architecture:
+    style: microservices
+    computePlatforms:
+      - eks
+      - ecs-fargate
+      - lambda
+    databases:
+      - aurora-postgresql
+      - dynamodb
+      - elasticache-redis
+    caches:
+      - elasticache-redis
+      - cloudfront
+    messaging:
+      - sqs
+      - sns
+      - kinesis
+    storage:
+      - s3
+    networking:
+      - alb
+      - nlb
+      - api-gateway
+      - nat-gateway
+      - cloudfront
+    observability:
+      - cloudwatch
+      - datadog
+      - prometheus
+    deploymentModel: multi-az-active-active
+    iac:
+      - terraform
+      - helm
+
+aws:
+  accessMode: assume_role
+  payerAccountId: "400000000001"
+  organizationId: o-northfield01
+  cur:
+    bucket: northfield-billing-cur
+    prefix: cloudoptix
+    region: us-east-1
+    reportName: northfield-cur-hourly
+  accounts:
+    - id: "400000000010"
+      alias: northfield-prod-us
+      environment: production
+      regions: [us-east-1, us-west-2]
+      roleArn: arn:aws:iam::400000000010:role/cloudoptix-execute
+      externalId: cloudoptix-ext-9a11f0c2
+      production: true
+    - id: "400000000011"
+      alias: northfield-prod-ca
+      environment: production
+      regions: [ca-central-1]
+      roleArn: arn:aws:iam::400000000011:role/cloudoptix-execute
+      externalId: cloudoptix-ext-9a11f0c3
+      production: true
+    - id: "400000000020"
+      alias: northfield-staging
+      environment: staging
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::400000000020:role/cloudoptix-execute
+      externalId: cloudoptix-ext-9a11f0c4
+      production: false
+    - id: "400000000030"
+      alias: northfield-sandbox
+      environment: sandbox
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::400000000030:role/cloudoptix-plan
+      externalId: cloudoptix-ext-9a11f0c5
+      production: false
+
+workloads:
+  - name: storefront-web
+    type: service
+    platform: eks
+    environment: production
+    criticality: critical
+    owner: web-platform@northfieldcommerce.example
+    team: web-platform
+    cluster: prod-us-east-1
+    namespace: storefront
+    slo:
+      availability: 0.9995
+      latencyP95Ms: 300
+      latencyP99Ms: 800
+      errorRateMax: 0.002
+  - name: catalog-search
+    type: service
+    platform: eks
+    environment: production
+    criticality: high
+    owner: search-team@northfieldcommerce.example
+    team: search
+    cluster: prod-us-east-1
+    namespace: search
+    dependsOn: [catalog-db]
+    slo:
+      availability: 0.999
+      latencyP95Ms: 150
+  - name: checkout-api
+    type: service
+    platform: ecs-fargate
+    environment: production
+    criticality: critical
+    owner: payments-team@northfieldcommerce.example
+    team: payments
+    dependsOn: [orders-db, payment-gateway-adapter]
+    slo:
+      availability: 0.9995
+      latencyP99Ms: 500
+      errorRateMax: 0.0005
+  - name: orders-db
+    type: database
+    platform: aurora-postgresql
+    environment: production
+    criticality: critical
+    owner: payments-team@northfieldcommerce.example
+    team: payments
+  - name: catalog-db
+    type: database
+    platform: aurora-postgresql
+    environment: production
+    criticality: high
+    owner: search-team@northfieldcommerce.example
+    team: search
+  - name: inventory-sync
+    type: worker
+    platform: lambda
+    environment: production
+    criticality: high
+    owner: fulfillment-team@northfieldcommerce.example
+    team: fulfillment
+    dependsOn: [orders-db]
+  - name: recommendation-engine
+    type: service
+    platform: eks
+    environment: production
+    criticality: medium
+    owner: growth-team@northfieldcommerce.example
+    team: growth
+    cluster: prod-us-east-1
+    namespace: growth
+
+business:
+  transactions:
+    - name: checkout
+      description: A completed purchase across any brand storefront.
+      monthlyVolume: 28000000
+      workloads: [checkout-api, orders-db]
+      targetCostPerUnit: 0.0074
+      volumeMetric: completed_orders
+      critical: true
+    - name: search-query
+      description: A catalog search request returning ranked results.
+      monthlyVolume: 950000000
+      workloads: [catalog-search, catalog-db]
+      targetCostPerUnit: 0.00019
+      volumeMetric: search_requests
+      critical: true
+    - name: inventory-sync-event
+      description: A single SKU inventory-level reconciliation event.
+      monthlyVolume: 62000000
+      workloads: [inventory-sync]
+      volumeMetric: sync_events
+      critical: false
+  kpis:
+    - name: checkout-conversion-rate
+      unit: percent
+      target: 71.0
+    - name: search-to-cart-rate
+      unit: percent
+      target: 8.5
+  customerCount: 12000000
+  peakSeasons:
+    - black-friday
+    - cyber-monday
+    - boxing-day
+    - back-to-school
+  trafficProfile: "diurnal with regional offset across two countries; 11x seasonal peak at Black Friday"
+
+objectives:
+  costReductionTarget: 0.20
+  monthlyBudget: 940000
+  availabilityTarget: 0.9995
+  maxLatencyMs: 800
+  timeframe: "current fiscal year"
+  costSlos:
+    - name: checkout-cost-per-transaction
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.0074
+      transaction: checkout
+      window: rolling_30d
+      errorBudgetPct: 0.08
+      breachActions: [notify, generate_recommendations]
+    - name: search-cost-per-transaction
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.00019
+      transaction: search-query
+      window: rolling_30d
+      errorBudgetPct: 0.15
+      breachActions: [notify]
+    - name: storefront-efficiency-score
+      kind: efficiency_score
+      scope: application
+      target: 0.75
+      window: rolling_30d
+      errorBudgetPct: 0.10
+      breachActions: [notify, generate_recommendations]
+    - name: platform-absolute-spend
+      kind: absolute_spend
+      scope: organization
+      target: 940000
+      window: calendar_month
+      errorBudgetPct: 0.05
+      breachActions: [notify, require_approval, freeze_cost_increases]
+
+optimization:
+  riskTolerance: high
+  preferences:
+    - prefer_spot_for_stateless
+    - prefer_graviton_where_compatible
+    - prefer_savings_plans_over_reserved
+  excludedActions:
+    - delete_snapshot
+  excludedResources:
+    - orders-db-primary
+    - catalog-db-primary
+  excludedTags:
+    cloudoptix.io/exclude: "true"
+  spotAllowed: true
+  commitmentAppetite: aggressive
+  minSavingThreshold: 15
+
+automation:
+  enabled: true
+  environments: [staging, sandbox, development]
+  autoExecuteActions:
+    - stop_instance
+    - delete_unattached_volume
+    - release_unattached_eip
+    - resize_gp2_to_gp3
+    - delete_old_snapshot
+  maintenanceWindows:
+    - name: nightly-staging
+      days: [mon, tue, wed, thu, fri]
+      startUtc: "05:00"
+      durationMinutes: 180
+      environments: [staging]
+    - name: weekend-sandbox
+      days: [sat, sun]
+      startUtc: "00:00"
+      durationMinutes: 360
+      environments: [sandbox, development]
+  maxConcurrentChanges: 10
+  maxMonthlyImpact: 60000
+  validationWindowMinutes: 45
+  autoRollback: true
+
+governance:
+  productionChangesRequireApproval: true
+  minApprovals: 2
+  approverRoles: [tenant_admin, architect]
+  segregationOfDuties: true
+  changeManagementSystem: servicenow
+  changeFreezeWindows: [black-friday, cyber-monday, boxing-day]
+  policyPack: aggressive
+
+security:
+  awsAccessMode: assume_role
+  complianceFrameworks: [pci-dss, soc2]
+  dataResidency: [us, ca]
+  encryptionRequired: true
+  ssoProvider: azure-ad
+  auditRetentionDays: 1825
+  piiHandling: tokenized-at-edge
+
+observability:
+  metricsSources: [cloudwatch, datadog, prometheus]
+  prometheusEndpoint: https://prometheus.internal.northfieldcommerce.example
+  otelEndpoint: https://otel.internal.northfieldcommerce.example:4317
+  tracingEnabled: true
+  logRetentionDays: 60
+
+notifications:
+  channels:
+    - name: platform-slack
+      type: slack
+      target: "#cloud-cost-alerts"
+      secretRef: notify/slack/platform-webhook
+      severities: [medium, high, critical]
+    - name: finops-email
+      type: email
+      target: finops@northfieldcommerce.example
+      severities: [high, critical]
+    - name: oncall-webhook
+      type: webhook
+      target: https://internal.northfieldcommerce.example/hooks/cloudoptix
+      secretRef: notify/webhook/oncall-hmac
+      severities: [critical]
+  subscriptions:
+    cost_slo_breach: [platform-slack, finops-email]
+    execution_rollback: [oncall-webhook, platform-slack]
+    anomaly_detected: [finops-email]
+  quietHoursUtc: "06:00-12:00"
+
+teams:
+  - name: payments
+    contact: payments-team@northfieldcommerce.example
+    owns: [checkout-api, orders-db]
+    members:
+      - email: rosa.delgado@northfieldcommerce.example
+        name: Rosa Delgado
+        roles: [tenant_admin, architect]
+      - email: tom.brannigan@northfieldcommerce.example
+        name: Tom Brannigan
+        roles: [developer]
+  - name: search
+    contact: search-team@northfieldcommerce.example
+    owns: [catalog-search, catalog-db]
+    members:
+      - email: wei.chen@northfieldcommerce.example
+        name: Wei Chen
+        roles: [architect, developer]
+  - name: web-platform
+    contact: web-platform@northfieldcommerce.example
+    owns: [storefront-web]
+    members:
+      - email: ines.morais@northfieldcommerce.example
+        name: Ines Morais
+        roles: [sre, developer]
+  - name: finops
+    contact: finops@northfieldcommerce.example
+    owns: []
+    members:
+      - email: greg.putnam@northfieldcommerce.example
+        name: Greg Putnam
+        roles: [finops_analyst, auditor]

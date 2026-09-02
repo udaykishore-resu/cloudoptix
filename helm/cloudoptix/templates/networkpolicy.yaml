@@ -1,0 +1,53 @@
+{{/*
+Default-deny ingress for every component, with two explicit allows:
+Prometheus scraping /metrics from the monitoring namespace, and (API only)
+inbound HTTP from the ALB. The AWS Load Balancer Controller's default IP
+target-type registers ALB-to-pod traffic as coming from ENIs inside the
+VPC, not from an in-cluster pod with a matching label — so the API's allow
+rule is a namespaceSelector-less "from anywhere" ingress on the container
+port rather than a pod selector, same as the security-group-level
+boundary terraform/modules/security's WAF sits in front of. Egress is left
+open: the app talks to RDS, ElastiCache, and a wide set of AWS service
+endpoints (see internal/adapters/aws) whose destination IPs are neither
+static nor practical to enumerate here — the boundary for those calls is
+IAM (terraform/modules/security's per-component roles), not
+NetworkPolicy.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+{{- range $name, $comp := .Values.components }}
+{{- if $comp.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cloudoptix.componentFullname" (list $ $name $comp) }}
+  labels:
+    {{- include "cloudoptix.componentLabels" (list $ $name $comp) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cloudoptix.componentSelectorLabels" (list $ $name $comp) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.monitoringNamespaceLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $comp.containerPort }}
+    {{- if eq $comp.kind "api" }}
+    # Any source may reach the API's container port — see this file's
+    # header comment on ALB IP-mode targeting. Omitting `from` entirely
+    # (rather than an empty `from: [{}]`) is NetworkPolicy's documented way
+    # to say "all sources, restricted only by the ports below." The WAF and
+    # OIDC/JWT auth are the real boundary here, not pod-level network
+    # identity.
+    - ports:
+        - protocol: TCP
+          port: {{ $comp.containerPort }}
+    {{- end }}
+---
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,68 @@
+# Partial overlay: `helm upgrade -f values.yaml -f values-dev.yaml`.
+# Only what actually differs from values.yaml's defaults for a dev cluster
+# — everything else (resource shapes, probe paths, security context) stays
+# the same as production on purpose, so dev is testing the same manifests
+# production runs, not a parallel simplified version of them.
+
+global:
+  environment: development
+  imageTag: dev
+
+config:
+  environment: development
+  server:
+    corsAllowedOrigins: ["http://localhost:3000"]
+  llm:
+    provider: scripted # the deterministic, no-API-key provider — see internal/infrastructure/config's LLMProviderScripted
+  auth:
+    devStaticTokenEnabled: true # config.Validate() only forbids this when environment=production
+  telemetry:
+    logLevel: debug
+    tracingEnabled: false
+
+secrets:
+  externalSecrets:
+    enabled: false # plain Secret from secrets.values below — no ExternalSecrets Operator required for a local/dev cluster
+  values:
+    databasePassword: "dev-only-not-a-real-secret"
+    redisPassword: "dev-only-not-a-real-secret"
+    awsExternalId: "dev-only-not-a-real-secret"
+    llmApiKey: ""
+    authServiceToken: "dev-only-not-a-real-secret"
+
+components:
+  api:
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+    pdb:
+      enabled: false
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  workerDiscovery:
+    replicaCount: 1
+    autoscaling: { enabled: false }
+    pdb: { enabled: false }
+  workerOptimization:
+    replicaCount: 1
+    autoscaling: { enabled: false }
+    pdb: { enabled: false }
+  workerAutomation:
+    replicaCount: 1
+    autoscaling: { enabled: false }
+    pdb: { enabled: false }
+  workerValidation:
+    replicaCount: 1
+    autoscaling: { enabled: false }
+  workerNotification:
+    replicaCount: 1
+    autoscaling: { enabled: false }
+
+ingress:
+  enabled: false # port-forward or a local ClusterIP is enough for dev; no ALB/WAF wiring to stand up
+
+networkPolicy:
+  enabled: false # simplest default for a local kind/minikube cluster that may not run a CNI enforcing NetworkPolicy at all
+
+topologySpreadConstraints: [] # meaningless with 1 replica per component

@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudoptix-production
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/udaykishore-resu/cloudoptix.git
+    # Production tracks an explicit release tag, never a branch — see
+    # .github/workflows/release.yml for how that tag gets created and
+    # signed. Update this field (a PR, reviewed like any other change) to
+    # promote a release, rather than letting production float with main.
+    targetRevision: v0.1.0
+    path: helm/cloudoptix
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudoptix-production
+  syncPolicy:
+    automated:
+      # prune: false in production — an object Argo CD no longer sees in
+      # git (e.g. a values change that drops a component) is surfaced as
+      # OutOfSync for a human to review and prune deliberately, rather than
+      # deleted automatically the moment a sync runs.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      # No CreateNamespace=true here on purpose — the production namespace
+      # is created by terraform/environments/production (its own audit
+      # trail, its own resource quotas/labels), not implicitly by whichever
+      # tool happens to sync first.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

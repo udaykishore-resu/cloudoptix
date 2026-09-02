@@ -1,0 +1,82 @@
+# Partial overlay: `helm upgrade -f values.yaml -f values-staging.yaml`.
+#
+# Staging exists to catch the things dev's single-replica, no-HPA,
+# no-NetworkPolicy shape can't: PDB/HPA behaviour under a rolling deploy,
+# NetworkPolicy actually blocking what it should, ExternalSecrets pulling
+# from a real (if separate) Secrets Manager path. So this overlay mirrors
+# production's *shape* (HA-ish component counts, NetworkPolicy on,
+# ExternalSecrets on) at smaller scale, rather than mirroring dev's
+# shortcuts — see terraform/environments/staging's README for the same
+# "staging matches production topology, not production size" principle
+# applied at the infrastructure layer.
+#
+# This file is also what deployments/argocd/applicationset.yaml uses for
+# the `staging` element of its list generator, alongside `dev` and
+# `production` — see that file's header comment for why a fourth values
+# file (beyond the three the original chart deliverable named) turned out
+# to be the right fix for an ApplicationSet limitation, not scope creep.
+
+global:
+  environment: staging
+  imageTag: "" # set at deploy time, same discipline as production — see values-production.yaml
+
+config:
+  environment: staging
+  llm:
+    provider: scripted # staging doesn't need a real LLM spend; config.Validate() only forces "anthropic"/"bedrock" once environment=production
+  auth:
+    devStaticTokenEnabled: false
+  telemetry:
+    logLevel: debug
+    tracingEnabled: true
+    traceSampleRatio: 1.0 # trace everything at staging's volume; cheap here, too expensive in production
+
+secrets:
+  externalSecrets:
+    enabled: true
+    secretStoreRef:
+      name: cloudoptix-staging-secret-store
+      kind: ClusterSecretStore
+    database: { remoteRef: "cloudoptix-staging/database-password" }
+    redis: { remoteRef: "cloudoptix-staging/redis-password" }
+    awsExternalId: { remoteRef: "cloudoptix-staging/aws-assume-role-external-id" }
+    llmApiKey: { remoteRef: "cloudoptix-staging/llm-api-key" }
+    authServiceToken: { remoteRef: "cloudoptix-staging/auth-service-token-secret" }
+
+components:
+  api:
+    replicaCount: 2
+    autoscaling:
+      minReplicas: 2
+      maxReplicas: 6
+    pdb:
+      minAvailable: 1
+  workerDiscovery:
+    replicaCount: 2
+    autoscaling: { minReplicas: 1, maxReplicas: 8 }
+  workerOptimization:
+    replicaCount: 2
+    autoscaling: { minReplicas: 1, maxReplicas: 6 }
+  workerAutomation:
+    replicaCount: 1
+    autoscaling: { minReplicas: 1, maxReplicas: 4 }
+  workerValidation:
+    replicaCount: 1
+    autoscaling: { minReplicas: 1, maxReplicas: 4 }
+  workerNotification:
+    replicaCount: 1
+    autoscaling: { minReplicas: 1, maxReplicas: 3 }
+
+ingress:
+  enabled: true
+  tls:
+    enabled: true
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+
+prometheusRule:
+  enabled: true

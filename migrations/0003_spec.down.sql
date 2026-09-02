@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS spec_versions;
+DROP TABLE IF EXISTS specs;

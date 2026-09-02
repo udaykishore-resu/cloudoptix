@@ -1,0 +1,53 @@
+# Default cost regression suite for .github/workflows/cost-regression.yml —
+# a simulate.RegressionSuite (internal/domain/simulate/compiler.go), the
+# same shape a tenant's own policy-as-code suite takes via the Cost
+# Regression API (see api/openapi.yaml's "Cost Regression" tag). This one
+# gates changes to this repository's own terraform/ modules; a customer
+# configures their own suite for their own infrastructure changes through
+# the product, not this file.
+name: cloudoptix-platform-terraform
+version: 1
+enabled: true
+checks:
+  - name: no-runaway-monthly-increase
+    kind: max_monthly_increase_pct
+    threshold: 25
+    on_violation: FAIL
+    message: >-
+      This change increases projected monthly AWS spend by more than 25%.
+      If that's expected (a deliberate capacity increase), get a second
+      approval and note the reason in the PR description — this check
+      exists to catch an unintended cost regression, not to block a real one.
+
+  - name: modest-increase-warning
+    kind: max_monthly_increase_pct
+    threshold: 10
+    on_violation: WARNING
+    message: "This change increases projected monthly spend by more than 10% — worth a second look before merging."
+
+  - name: no-new-nat-gateways-outside-demo
+    kind: forbidden_resource
+    resource_types: ["aws_nat_gateway"]
+    environments: [production, staging]
+    on_violation: FAIL
+    message: >-
+      A new NAT gateway in staging or production needs an explicit
+      cost/HA trade-off discussion (see terraform/modules/network's
+      single_nat_gateway variable) — this check does not fire against
+      terraform/demo, where extra NAT gateways are the deliberate point.
+
+  - name: pricing-coverage-floor
+    kind: max_unpriced_ratio
+    threshold: 0.35
+    on_violation: WARNING
+    message: >-
+      More than 35% of this change's resources could not be priced —
+      the verdict above is based on incomplete coverage. Check the
+      "Unpriced resources" table in this comment before trusting the delta.
+
+  - name: changed-resources-must-be-tagged
+    kind: require_tags
+    required_tags: ["Project"]
+    environments: [production, staging]
+    on_violation: WARNING
+    message: "New/changed resources should carry a Project tag for cost attribution — see each module's `tags` variable."

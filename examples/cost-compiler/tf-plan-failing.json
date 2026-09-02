@@ -1,0 +1,77 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "variables": {
+    "environment": { "value": "production" },
+    "region": { "value": "us-east-1" }
+  },
+  "resource_changes": [
+    {
+      "address": "module.orders_platform_multi_az.aws_nat_gateway.az_a",
+      "module_address": "module.orders_platform_multi_az",
+      "type": "aws_nat_gateway",
+      "name": "az_a",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "subnet_id": "subnet-0a1b2c3d",
+          "tags": { "Application": "orders-api", "Team": "payments", "Environment": "production" }
+        }
+      }
+    },
+    {
+      "address": "module.orders_platform_multi_az.aws_nat_gateway.az_b",
+      "module_address": "module.orders_platform_multi_az",
+      "type": "aws_nat_gateway",
+      "name": "az_b",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "subnet_id": "subnet-0e4f5a6b",
+          "tags": { "Application": "orders-api", "Team": "payments", "Environment": "production" }
+        }
+      }
+    },
+    {
+      "address": "module.orders_platform_multi_az.aws_nat_gateway.az_c",
+      "module_address": "module.orders_platform_multi_az",
+      "type": "aws_nat_gateway",
+      "name": "az_c",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "subnet_id": "subnet-0c7d8e9f",
+          "tags": { "Application": "orders-api", "Team": "payments", "Environment": "production" }
+        }
+      }
+    },
+    {
+      "address": "module.orders_platform_multi_az.aws_db_instance.orders",
+      "module_address": "module.orders_platform_multi_az",
+      "type": "aws_db_instance",
+      "name": "orders",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "instance_class": "db.r5.large",
+          "engine": "postgres",
+          "multi_az": false,
+          "tags": { "Application": "orders-api", "Team": "payments", "Environment": "production" }
+        },
+        "after": {
+          "instance_class": "db.r5.2xlarge",
+          "engine": "postgres",
+          "multi_az": false,
+          "tags": { "Application": "orders-api", "Team": "payments", "Environment": "production" }
+        }
+      }
+    }
+  ]
+}

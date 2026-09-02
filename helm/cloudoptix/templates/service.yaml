@@ -1,0 +1,27 @@
+{{/*
+One ClusterIP Service per component. The API's is what the Ingress/ALB
+targets; every component's (including the workers, which serve no public
+route) exists so the ServiceMonitor has something stable to scrape
+/metrics from — a worker's pod IP alone is not a stable scrape target
+across a rolling deployment.
+*/}}
+{{- range $name, $comp := .Values.components }}
+{{- if $comp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cloudoptix.componentFullname" (list $ $name $comp) }}
+  labels:
+    {{- include "cloudoptix.componentLabels" (list $ $name $comp) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "cloudoptix.componentSelectorLabels" (list $ $name $comp) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ if eq $comp.kind "api" }}{{ $comp.service.port }}{{ else }}{{ $comp.containerPort }}{{ end }}
+      targetPort: http
+      protocol: TCP
+---
+{{- end }}
+{{- end }}

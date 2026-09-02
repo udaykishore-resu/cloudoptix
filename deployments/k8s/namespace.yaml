@@ -1,0 +1,36 @@
+# Applied once, outside any Helm release — see deployments/k8s/README.md.
+# `pod-security.kubernetes.io/enforce: restricted` matches
+# helm/cloudoptix's own securityContext (non-root, read-only root
+# filesystem, all capabilities dropped) — the chart already produces pods
+# that pass the restricted profile, so enforcing it at the namespace level
+# costs nothing and catches any future template regression immediately at
+# admission time instead of at code review.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudoptix-dev
+  labels:
+    kubernetes.io/metadata.name: cloudoptix-dev
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudoptix-staging
+  labels:
+    kubernetes.io/metadata.name: cloudoptix-staging
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudoptix-production
+  labels:
+    kubernetes.io/metadata.name: cloudoptix-production
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

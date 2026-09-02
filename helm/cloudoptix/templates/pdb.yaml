@@ -1,0 +1,16 @@
+{{- range $name, $comp := .Values.components }}
+{{- if and $comp.enabled $comp.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cloudoptix.componentFullname" (list $ $name $comp) }}
+  labels:
+    {{- include "cloudoptix.componentLabels" (list $ $name $comp) | nindent 4 }}
+spec:
+  minAvailable: {{ $comp.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "cloudoptix.componentSelectorLabels" (list $ $name $comp) | nindent 6 }}
+---
+{{- end }}
+{{- end }}

@@ -1,0 +1,89 @@
+# fixture.yaml is the seed for BuildDemoEstate: the account identity, network
+# topology and the tunable parameters (counts, size ranges, traffic volumes)
+# that the Go builder in demo.go expands into concrete resources with a
+# seeded PRNG. Topology (VPC/subnets/security groups/NAT gateways) and every
+# quantity that shapes total cost or waste live here so the target cost/waste
+# envelope can be tuned without touching Go code; the per-resource "story"
+# (which application an instance belongs to, why it is oversized, and so on)
+# is expressed as short structured entries below rather than free code,
+# because that narrative *is* data — it is exactly what a real discovery scan
+# would return.
+
+account:
+  account_id: "412984773301"
+  alias: "shopfleet-prod"
+  region: "us-east-1"
+
+vpc:
+  id: "vpc-0shopfleet01"
+  name: "shopfleet-prod-vpc"
+  cidr: "10.20.0.0/16"
+  subnets:
+    - { id: "subnet-0priv1a", name: "private-app-1a", az: "us-east-1a", cidr: "10.20.1.0/24", public: false }
+    - { id: "subnet-0priv1b", name: "private-app-1b", az: "us-east-1b", cidr: "10.20.2.0/24", public: false }
+    - { id: "subnet-0priv1c", name: "private-app-1c", az: "us-east-1c", cidr: "10.20.3.0/24", public: false }
+    - { id: "subnet-0pub1a", name: "public-1a", az: "us-east-1a", cidr: "10.20.101.0/24", public: true }
+    - { id: "subnet-0pub1b", name: "public-1b", az: "us-east-1b", cidr: "10.20.102.0/24", public: true }
+    - { id: "subnet-0pub1c", name: "public-1c", az: "us-east-1c", cidr: "10.20.103.0/24", public: true }
+    - { id: "subnet-0data1a", name: "data-1a", az: "us-east-1a", cidr: "10.20.201.0/24", public: false }
+    - { id: "subnet-0data1b", name: "data-1b", az: "us-east-1b", cidr: "10.20.202.0/24", public: false }
+  security_groups:
+    - { id: "sg-0webtier", name: "web-tier" }
+    - { id: "sg-0apptier", name: "app-tier" }
+    - { id: "sg-0dbtier", name: "db-tier" }
+    - { id: "sg-0batchtier", name: "batch-tier" }
+  # Deliberately no VPC endpoints: every S3/DynamoDB call from the private
+  # subnets exits through NAT, which is the point of the NAT waste story
+  # below. A remediation action creates the endpoint; nothing pre-creates it.
+
+# Three NAT gateways, one per AZ, each carrying heavy S3-bound traffic that a
+# gateway VPC endpoint would remove entirely.
+nat_gateways:
+  - { id: "nat-0a1b2c3d", name: "nat-us-east-1a", az: "us-east-1a", subnet: "subnet-0pub1a", gb_processed_month: 125000 }
+  - { id: "nat-0b2c3d4e", name: "nat-us-east-1b", az: "us-east-1b", subnet: "subnet-0pub1b", gb_processed_month: 120000 }
+  - { id: "nat-0c3d4e5f", name: "nat-us-east-1c", az: "us-east-1c", subnet: "subnet-0pub1c", gb_processed_month: 98000 }
+
+# Tunable waste/scale parameters consumed by demo.go's bulk generators.
+params:
+  seed: 20260601
+
+  # EKS: node groups running well under half packed, with pods that request
+  # far more than they use.
+  eks_nodegroup_a_size: 130
+  eks_nodegroup_b_size: 55
+  eks_packed_fraction: 0.35
+  eks_request_over_actual_ratio: 2.8
+
+  # ECS/Fargate: a wide, modestly over-provisioned service mesh.
+  fargate_service_count: 25
+  fargate_avg_desired_count: 36
+  fargate_avg_cpu_units: 2048
+  fargate_avg_memory_mb: 4096
+
+  # Bulk EBS waste.
+  unattached_gp2_count: 12
+  unattached_gp2_min_gib: 100
+  unattached_gp2_max_gib: 800
+  gp2_should_be_gp3_count: 35
+  gp2_should_be_gp3_min_gib: 100
+  gp2_should_be_gp3_max_gib: 900
+
+  # Bulk snapshots: most are old enough to be a lifecycle finding.
+  snapshot_count: 560
+  snapshot_min_gib: 20
+  snapshot_max_gib: 350
+  snapshot_min_age_days: 40
+  snapshot_max_age_days: 900
+  snapshot_old_threshold_days: 365
+
+  # Elastic IPs.
+  unattached_eip_count: 9
+  attached_eip_count: 4
+
+  # CloudWatch log groups with no retention limit.
+  log_group_count: 18
+  log_group_never_expire_fraction: 0.7
+
+  # Attribution realism: this fraction of eligible resources carry no
+  # Application/Environment tags at all.
+  untagged_fraction: 0.15

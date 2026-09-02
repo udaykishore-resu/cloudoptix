@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1.7
+
+# frontend/next.config.mjs does not set `output: "standalone"` (and this
+# change's scope is infrastructure only — see deployments/docker/README.md
+# — so that file is not touched here), so this build ships the full
+# `next start` runtime rather than Next's minimal standalone server
+# bundle. Adding `output: "standalone"` to next.config.mjs would let a
+# follow-up shrink this image substantially by copying only
+# .next/standalone + .next/static instead of node_modules wholesale.
+
+ARG NODE_VERSION=20
+
+FROM node:${NODE_VERSION}-bookworm-slim AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+FROM node:${NODE_VERSION}-bookworm-slim AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ .
+ARG NEXT_PUBLIC_API_BASE_URL=""
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+FROM node:${NODE_VERSION}-bookworm-slim AS final
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="cloudoptix-frontend" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/udaykishore-resu/cloudoptix" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# node:*-slim still carries a shell and package manager, unlike the API
+# image's distroless base — Next's own `next start` server (not a static
+# binary) needs the Node runtime present, so a from-scratch/distroless
+# base is not an option here without standalone output. A dedicated
+# non-root user is created explicitly instead.
+RUN groupadd --gid 10001 nextjs && useradd --uid 10001 --gid nextjs --shell /usr/sbin/nologin --no-create-home nextjs
+
+WORKDIR /app
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+COPY --from=build --chown=nextjs:nextjs /app/.next ./.next
+COPY --from=build --chown=nextjs:nextjs /app/node_modules ./node_modules
+COPY --from=build --chown=nextjs:nextjs /app/package.json ./package.json
+# Wildcard, not a plain path: frontend/ currently has no public/ directory
+# to copy, and COPY with a glob that matches zero files is a documented
+# no-op rather than a build failure (unlike a literal missing path).
+COPY --from=build --chown=nextjs:nextjs /app/public* ./public
+
+USER nextjs:nextjs
+EXPOSE 3000
+CMD ["npm", "run", "start"]

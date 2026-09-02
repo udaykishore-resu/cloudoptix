@@ -1,0 +1,120 @@
+{{/*
+Two ConfigMaps, deliberately kept separate:
+
+  - "-config" holds a flat CLOUDOPTIX_<FIELD>=value map, consumed via
+    envFrom in every Deployment. It only covers the fields
+    internal/infrastructure/config/config.go's envBindings() table
+    actually reads from the environment — see that function's doc
+    comment. This is the layer an operator reaches for to override one
+    value per environment (database host, log level, feature flags)
+    without touching the base file.
+
+  - "-config-file" holds a full config.yaml, mounted as a volume at
+    /etc/cloudoptix/config.yaml and loaded via the app's --config flag.
+    It exists because several Config fields (database.ssl_mode,
+    database.max_open_conns, redis.tls_enabled, telemetry.metrics_path,
+    every features.* flag except autonomous_execution, and most of
+    worker.*) have NO environment-variable binding at all in config.go —
+    Load() only reads a value for those from this file (or a flag), never
+    from CLOUDOPTIX_*. Shipping only env vars would silently leave those
+    fields at Defaults() forever, which is a worse failure mode than an
+    extra ConfigMap.
+
+Per config.go's own documented layering (defaults -> file -> env -> flags),
+the two ConfigMaps below are consistent with each other by construction:
+every field in "-config-file" that also has an env binding is set to the
+exact same value in "-config", so which layer "wins" is never a real
+question in practice.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cloudoptix.fullname" . }}-config
+  labels:
+    {{- include "cloudoptix.labels" . | nindent 4 }}
+data:
+  CLOUDOPTIX_ENVIRONMENT: {{ .Values.config.environment | quote }}
+  CLOUDOPTIX_SERVER_HOST: {{ .Values.config.server.host | quote }}
+  CLOUDOPTIX_SERVER_PORT: {{ .Values.config.server.port | quote }}
+  CLOUDOPTIX_SERVER_TLS_ENABLED: {{ .Values.config.server.tlsEnabled | quote }}
+  CLOUDOPTIX_SERVER_CORS_ALLOWED_ORIGINS: {{ join "," .Values.config.server.corsAllowedOrigins | quote }}
+  CLOUDOPTIX_DATABASE_HOST: {{ .Values.config.database.host | quote }}
+  CLOUDOPTIX_DATABASE_PORT: {{ .Values.config.database.port | quote }}
+  CLOUDOPTIX_DATABASE_NAME: {{ .Values.config.database.name | quote }}
+  CLOUDOPTIX_DATABASE_USER: {{ .Values.config.database.user | quote }}
+  CLOUDOPTIX_REDIS_ADDRS: {{ join "," .Values.config.redis.addrs | quote }}
+  CLOUDOPTIX_AWS_REGION: {{ .Values.config.aws.region | quote }}
+  CLOUDOPTIX_LLM_PROVIDER: {{ .Values.config.llm.provider | quote }}
+  CLOUDOPTIX_LLM_MODEL: {{ .Values.config.llm.model | quote }}
+  {{- if .Values.config.llm.bedrockRegion }}
+  CLOUDOPTIX_LLM_BEDROCK_REGION: {{ .Values.config.llm.bedrockRegion | quote }}
+  {{- end }}
+  CLOUDOPTIX_TELEMETRY_LOG_LEVEL: {{ .Values.config.telemetry.logLevel | quote }}
+  CLOUDOPTIX_TELEMETRY_LOG_FORMAT: {{ .Values.config.telemetry.logFormat | quote }}
+  CLOUDOPTIX_TELEMETRY_TRACING_ENABLED: {{ .Values.config.telemetry.tracingEnabled | quote }}
+  CLOUDOPTIX_TELEMETRY_TRACE_SAMPLE_RATIO: {{ .Values.config.telemetry.traceSampleRatio | quote }}
+  {{- if .Values.config.telemetry.otlpEndpoint }}
+  CLOUDOPTIX_TELEMETRY_OTLP_ENDPOINT: {{ .Values.config.telemetry.otlpEndpoint | quote }}
+  {{- end }}
+  CLOUDOPTIX_AUTH_OIDC_ISSUER_URL: {{ .Values.config.auth.oidcIssuerUrl | quote }}
+  CLOUDOPTIX_AUTH_OIDC_AUDIENCE: {{ .Values.config.auth.oidcAudience | quote }}
+  CLOUDOPTIX_AUTH_DEV_STATIC_TOKEN_ENABLED: {{ .Values.config.auth.devStaticTokenEnabled | quote }}
+  CLOUDOPTIX_FEATURES_AUTONOMOUS_EXECUTION: {{ .Values.config.features.autonomousExecution | quote }}
+  CLOUDOPTIX_WORKER_DISCOVERY_CONCURRENCY: {{ .Values.config.worker.discoveryConcurrency | quote }}
+  CLOUDOPTIX_WORKER_EXECUTION_CONCURRENCY: {{ .Values.config.worker.executionConcurrency | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cloudoptix.fullname" . }}-config-file
+  labels:
+    {{- include "cloudoptix.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    environment: {{ .Values.config.environment }}
+    server:
+      host: {{ .Values.config.server.host | quote }}
+      port: {{ .Values.config.server.port }}
+      tls_enabled: {{ .Values.config.server.tlsEnabled }}
+      cors_allowed_origins: {{ toYaml .Values.config.server.corsAllowedOrigins | nindent 8 }}
+    database:
+      host: {{ .Values.config.database.host | quote }}
+      port: {{ .Values.config.database.port }}
+      name: {{ .Values.config.database.name | quote }}
+      user: {{ .Values.config.database.user | quote }}
+      ssl_mode: {{ .Values.config.database.sslMode | quote }}
+    redis:
+      addrs: {{ toYaml .Values.config.redis.addrs | nindent 8 }}
+      tls_enabled: {{ .Values.config.redis.tlsEnabled }}
+    aws:
+      region: {{ .Values.config.aws.region | quote }}
+    llm:
+      provider: {{ .Values.config.llm.provider | quote }}
+      model: {{ .Values.config.llm.model | quote }}
+    telemetry:
+      service_name: cloudoptix-api
+      service_version: {{ .Chart.AppVersion | quote }}
+      tracing_enabled: {{ .Values.config.telemetry.tracingEnabled }}
+      trace_sample_ratio: {{ .Values.config.telemetry.traceSampleRatio }}
+      metrics_enabled: true
+      metrics_path: /metrics
+      log_level: {{ .Values.config.telemetry.logLevel | quote }}
+      log_format: {{ .Values.config.telemetry.logFormat | quote }}
+    auth:
+      oidc_issuer_url: {{ .Values.config.auth.oidcIssuerUrl | quote }}
+      oidc_audience: {{ .Values.config.auth.oidcAudience | quote }}
+      dev_static_token_enabled: {{ .Values.config.auth.devStaticTokenEnabled }}
+      api_key_header: X-CloudOptix-Api-Key
+    features:
+      autonomous_execution: {{ .Values.config.features.autonomousExecution }}
+      cost_compiler: {{ .Values.config.features.costCompiler }}
+      copilot: {{ .Values.config.features.copilot }}
+      savings_learning: {{ .Values.config.features.savingsLearning }}
+      sse_streaming: {{ .Values.config.features.sseStreaming }}
+    worker:
+      discovery_concurrency: {{ .Values.config.worker.discoveryConcurrency }}
+      execution_concurrency: {{ .Values.config.worker.executionConcurrency }}
+      poll_interval: {{ .Values.config.worker.pollInterval | quote }}
+      lock_ttl: {{ .Values.config.worker.lockTTL | quote }}
+      max_job_attempts: {{ .Values.config.worker.maxJobAttempts }}
+      notification_batch_size: {{ .Values.config.worker.notificationBatchSize }}

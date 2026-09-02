@@ -1,0 +1,68 @@
+{{/*
+Runs `cloudoptix migrate` (the embedded migrations in migrations/embed.go)
+as a pre-install/pre-upgrade hook, before Helm touches any Deployment. A
+hook-succeeded policy deletes the Job afterward so a re-run of the same
+release name doesn't collide with a previous attempt's Job name; hook-
+failed is kept around instead, so a failed migration leaves its pod logs
+in place for `kubectl logs` rather than vanishing exactly when you need to
+see why it failed.
+
+This ordering — migrate, then roll pods — is also what
+deployments/argocd/*'s sync-wave annotations reproduce for a GitOps
+deployment path that doesn't go through `helm upgrade` hooks directly; see
+that directory's README.
+*/}}
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cloudoptix.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "cloudoptix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "cloudoptix.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cloudoptix.fullname" . }}-migration
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ printf "%s:%s" .Values.global.imageRegistry (.Values.global.imageTag | default .Chart.AppVersion) }}
+          command: {{ toYaml .Values.migration.command | nindent 12 }}
+          args: {{ toYaml (append .Values.migration.args "--config=/etc/cloudoptix/config.yaml") | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "cloudoptix.fullname" . }}-config
+          env:
+            {{- include "cloudoptix.secretEnv" . | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-file
+              mountPath: /etc/cloudoptix
+              readOnly: true
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config-file
+          configMap:
+            name: {{ include "cloudoptix.fullname" . }}-config-file
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

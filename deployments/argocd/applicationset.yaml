@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cloudoptix
+  namespace: argocd
+spec:
+  # goTemplate + sprig gives {{ }} placeholders access to Sprig functions,
+  # matching the Helm chart's own templating idiom — but ApplicationSet's
+  # templating only ever substitutes the CONTENTS of an already-declared
+  # string field (metadata.name, targetRevision, a single valueFiles list
+  # item, and so on). It does not generate new YAML structure: no
+  # {{- range }} producing a variable number of list items, no
+  # {{ .flag }} producing a real boolean from a string. Both were tried
+  # here first and both silently break `kubectl apply` on this exact file
+  # (raw '{{' at a YAML node position is invalid YAML, independent of
+  # Argo CD ever seeing it) — see values-staging.yaml's header for how
+  # that shaped the fix. What's below works within that real constraint:
+  # every generator element yields the identical list SHAPE
+  # (valueFiles has exactly two entries; syncPolicy is identical for
+  # every element), and only individual string values vary.
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          # Deliberately dev + staging only, not production. Production
+          # is intentionally NOT auto-synced/auto-pruned by anything —
+          # see deployments/argocd/application-production.yaml (prune:
+          # false, no CreateNamespace, a pinned targetRevision tag,
+          # promoted by editing that file's tag in a reviewed PR). Adding
+          # a production element here, sharing this ApplicationSet's
+          # uniform prune:true/selfHeal:true syncPolicy, would silently
+          # undo that deliberate safety choice the moment someone added
+          # one more list element.
+          - env: dev
+            namespace: cloudoptix-dev
+            targetRevision: main
+          - env: staging
+            namespace: cloudoptix-staging
+            targetRevision: main
+  template:
+    metadata:
+      name: "cloudoptix-{{.env}}"
+      annotations:
+        argocd.argoproj.io/sync-wave: "0"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/udaykishore-resu/cloudoptix.git
+        targetRevision: "{{.targetRevision}}"
+        path: helm/cloudoptix
+        helm:
+          # Every environment this ApplicationSet manages follows the
+          # same values.yaml + values-<env>.yaml convention (see
+          # helm/cloudoptix/README.md), so the list has a fixed shape —
+          # only the second entry's string content is templated, which
+          # is the kind of substitution ApplicationSet actually supports.
+          valueFiles:
+            - values.yaml
+            - "values-{{.env}}.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.namespace}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true
+          - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

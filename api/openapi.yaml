@@ -1,0 +1,4208 @@
+openapi: 3.1.0
+
+info:
+  title: CloudOptix API
+  version: "1.0.0"
+  summary: >-
+    Autonomous cloud cost intelligence and optimization: architecture-aware
+    discovery, economics, recommendations, governed automation and an
+    auditable execution trail, all tenant-isolated.
+  description: |
+    CloudOptix models a customer's AWS estate as a digital twin, prices it,
+    finds savings, and — within policy — executes and rolls back changes
+    itself. This document describes the whole HTTP API a client (the
+    CloudOptix web app, a CI pipeline calling the cost compiler, or a partner
+    integration) talks to.
+
+    ## Authentication
+    Every route except `/healthz`, `/readyz`, `/metrics`, `/openapi.yaml` and
+    the `Onboarding` tag requires a credential: either an OIDC-issued bearer
+    JWT (`Authorization: Bearer <token>`) or a service API key
+    (`X-CloudOptix-Api-Key: <key>`). See the `BearerAuth` and `ApiKeyAuth`
+    security schemes below. A worker or CI system uses a service token
+    (issued out of band) presented the same way as a user's bearer token.
+
+    ## Tenant scope
+    An OIDC principal may belong to more than one tenant; which one a
+    request is scoped to is resolved from the token's own tenant claim when
+    present, or from the `X-CloudOptix-Tenant` header otherwise, with a
+    membership check either way — a header can select among tenants a
+    principal actually belongs to, never grant a new one. A service token
+    and an API key are each bound to exactly one tenant already, so the
+    header is not needed (and is ignored) on those paths. Every path in this
+    document is implicitly scoped to the resolved tenant; no path parameter
+    ever names a tenant explicitly.
+
+    ## Errors
+    Every error response is `application/problem+json` (RFC 7807), extended
+    with a stable machine-readable `code` and, for validation failures, a
+    field-level `issues` array. See `Problem` under Schemas.
+
+    A cross-tenant object reference (an id that is well-formed but belongs to
+    a *different* tenant than the caller's) renders as `404 Not Found`, byte
+    for byte identical to a genuinely nonexistent id — never `403 Forbidden`.
+    A 403 would itself leak that the id is valid in some other tenant, which
+    is the vulnerability the 404 mapping exists to close.
+
+    ## Pagination
+    List endpoints that can return more results than fit in one response use
+    cursor pagination: pass `cursor` (opaque, from a previous response's
+    `next_cursor`) and `limit`. There is no page number and no total-count
+    guarantee on a first page, because the underlying store does not do a
+    second scan just to report one. `sort` and `order` select the field and
+    direction.
+
+    ## Rate limits
+    Every response carries `X-RateLimit-Remaining`, and a `429` additionally
+    carries `Retry-After` (seconds). Limits are enforced per tenant, not per
+    credential, so two service tokens for the same tenant share one budget.
+
+    ## Idempotency
+    Every mutating endpoint accepts an `Idempotency-Key` header. Replaying
+    the same key with the same request body within the retention window
+    returns the original response verbatim instead of repeating the
+    mutation; replaying the same key with a *different* body is rejected
+    with `409 Conflict` rather than silently executing either version.
+
+    ## Streaming
+    A handful of endpoints (marked below) respond with
+    `text/event-stream` instead of JSON: onboarding chat turns, the AI
+    copilot's answer, and long-running job progress (discovery runs,
+    execution plans). Each is a thin SSE framing over the same
+    synchronous/snapshot API described elsewhere in this document — see each
+    operation's description for exactly what it polls or replays.
+  contact:
+    name: CloudOptix Platform Team
+    url: https://cloudoptix.io
+  license:
+    name: Proprietary
+    url: https://cloudoptix.io/terms
+
+servers:
+  - url: https://api.cloudoptix.io/api/v1
+    description: Production
+  - url: https://api.staging.cloudoptix.io/api/v1
+    description: Staging
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+tags:
+  - name: Authentication
+    description: Who the server thinks the caller is.
+  - name: Onboarding
+    description: >-
+      The conversational flow that turns a prospective customer into a
+      tenant with an approved specification. Unauthenticated end to end.
+  - name: Specs
+    description: Versioned, approvable specifications after onboarding.
+  - name: Tenants
+    description: Tenant profile and settings administration.
+  - name: Users
+    description: Tenant membership and role administration.
+  - name: AWS Accounts
+    description: Connecting, verifying and managing customer AWS accounts.
+  - name: Discovery
+    description: Scanning an AWS estate into CloudOptix's model.
+  - name: Architecture
+    description: The digital twin — the architecture graph and cost flow.
+  - name: Resources
+    description: Individual cloud resources, as views over the digital twin.
+  - name: Costs
+    description: Billed cost intelligence — summaries, series, anomalies.
+  - name: Economics
+    description: Cost attributed to business meaning — footprints, unit economics.
+  - name: Cost SLOs
+    description: Budget objectives with error budgets and breach actions.
+  - name: Recommendations
+    description: Ranked, evidenced savings opportunities.
+  - name: Simulations
+    description: Architecture mutation search and what-if counterfactuals.
+  - name: Cost Compiler
+    description: Pricing an infrastructure-as-code change set before it merges.
+  - name: Cost Regression
+    description: Budget assertions checked against a compiled change set.
+  - name: Policies
+    description: The rules governing what may auto-execute, need approval, or is prohibited.
+  - name: Approvals
+    description: Human decisions required by policy.
+  - name: Automation
+    description: Planning and running the autonomous optimization loop.
+  - name: Executions
+    description: The lifecycle of one approved, executable change.
+  - name: Savings
+    description: The realized-savings funnel, from potential to validated.
+  - name: Audit
+    description: The tamper-evident record of everything CloudOptix did.
+  - name: AI Copilot
+    description: Grounded natural-language answers over a tenant's own data.
+  - name: Health
+    description: >-
+      Liveness, readiness and metrics — polled by infrastructure that has no
+      CloudOptix credential and no tenant, so these are the only operations
+      in this document mounted outside `/api/v1` and outside every
+      authentication requirement.
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+# YAML anchors for parameters and error responses shared across dozens of
+# operations. A vendor extension at the document root (x-*, permitted
+# anywhere per the OpenAPI 3.1 Specification Extensions rule) rather than a
+# components/ entry, because these are resolved by the YAML parser itself —
+# before any OpenAPI tooling sees the document — while a $ref into
+# components/parameters would still repeat one line per operation for no
+# benefit; the effect on the parsed document is identical to writing every
+# field out longhand at every one of the ~115 operations below, just without
+# ~115 chances for one of those copies to drift from the rest.
+x-anchors:
+  tenant_header: &tenantHeader
+    name: X-CloudOptix-Tenant
+    in: header
+    required: false
+    schema: { type: string }
+    description: >-
+      Selects which of the caller's tenants this request is scoped to, when
+      the credential (an OIDC token whose claims name no tenant) does not
+      already imply one. Ignored by a service-token or API-key credential,
+      each already bound to exactly one tenant. Never widens access beyond
+      the caller's own memberships — see the Tenant scope section above.
+    example: "tn_01hz3k4x8y"
+  idempotency_key: &idempotencyKey
+    name: Idempotency-Key
+    in: header
+    required: false
+    schema: { type: string }
+    description: >-
+      Replaying the same key with an identical request body returns the
+      original response verbatim; replaying it with a different body is
+      rejected with 409 Conflict.
+    example: "3f29b6d0-8a3e-4b7a-9c1e-2a6b6b1f9e21"
+  cursor_param: &cursorParam
+    name: cursor
+    in: query
+    schema: { type: string }
+    description: Opaque continuation token from a previous response's `next_cursor`.
+  limit_param: &limitParam
+    name: limit
+    in: query
+    schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+  sort_param: &sortParam
+    name: sort
+    in: query
+    schema: { type: string }
+    description: Field to sort by.
+  order_param: &orderParam
+    name: order
+    in: query
+    schema: { type: string, enum: [asc, desc], default: asc }
+  from_param: &fromParam
+    name: from
+    in: query
+    schema: { type: string, format: date-time }
+    description: Defaults to 30 days before `to` when omitted.
+  to_param: &toParam
+    name: to
+    in: query
+    schema: { type: string, format: date-time }
+    description: Defaults to now when omitted.
+  account_id_query: &accountIdQuery
+    name: account_id
+    in: query
+    schema: { type: array, items: { type: string } }
+    style: form
+    explode: true
+  region_query: &regionQuery
+    name: region
+    in: query
+    schema: { type: array, items: { type: string } }
+    style: form
+    explode: true
+  environment_query: &environmentQuery
+    name: environment
+    in: query
+    schema: { type: array, items: { type: string } }
+    style: form
+    explode: true
+  granularity_query: &granularityQuery
+    name: granularity
+    in: query
+    schema: { type: string, enum: [hourly, daily, monthly], default: daily }
+  id_path_param: &idPathParam
+    name: id
+    in: path
+    required: true
+    schema: { type: string }
+  user_id_path_param: &userIDPathParam
+    name: userID
+    in: path
+    required: true
+    schema: { type: string }
+  run_id_path_param: &runIDPathParam
+    name: runID
+    in: path
+    required: true
+    schema: { type: string }
+  recommendation_id_path_param: &recommendationIDPathParam
+    name: recommendationID
+    in: path
+    required: true
+    schema: { type: string }
+  compilation_id_path_param: &compilationIDPathParam
+    name: compilationID
+    in: path
+    required: true
+    schema: { type: string }
+  common_errors: &commonErrors
+    "400": { $ref: "#/components/responses/BadRequest" }
+    "401": { $ref: "#/components/responses/Unauthorized" }
+    "403": { $ref: "#/components/responses/Forbidden" }
+    "404": { $ref: "#/components/responses/NotFound" }
+    "409": { $ref: "#/components/responses/Conflict" }
+    "429": { $ref: "#/components/responses/TooManyRequests" }
+    "500": { $ref: "#/components/responses/InternalError" }
+
+paths:
+  # ================================================================
+  # Health (mounted at the server root, not under /api/v1 — see the
+  # Health tag's description)
+  # ================================================================
+  /healthz:
+    servers:
+      - url: https://api.cloudoptix.io
+        description: Production
+      - url: https://api.staging.cloudoptix.io
+        description: Staging
+      - url: http://localhost:8080
+        description: Local development
+    get:
+      operationId: health.liveness
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      description: >-
+        Process-internal checks only — never a database, cache, AWS or LLM
+        provider dependency. Answers "should the orchestrator restart this
+        pod", so it stays cheap and free of anything external that could
+        make a healthy process look wedged.
+      responses:
+        "200":
+          description: Live.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "503":
+          description: Degraded — at least one liveness check failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /readyz:
+    servers:
+      - url: https://api.cloudoptix.io
+        description: Production
+      - url: https://api.staging.cloudoptix.io
+        description: Staging
+      - url: http://localhost:8080
+        description: Local development
+    get:
+      operationId: health.readiness
+      tags: [Health]
+      summary: Readiness probe
+      security: []
+      description: >-
+        Every dependency a request actually needs (database, cache, AWS
+        reachability). Answers "should the load balancer send this pod
+        traffic right now".
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "503":
+          description: Not ready — at least one readiness check failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /metrics:
+    servers:
+      - url: https://api.cloudoptix.io
+        description: Production
+      - url: https://api.staging.cloudoptix.io
+        description: Staging
+      - url: http://localhost:8080
+        description: Local development
+    get:
+      operationId: health.metrics
+      tags: [Health]
+      summary: Prometheus scrape endpoint
+      security: []
+      description: >-
+        The platform's Prometheus registry in the standard exposition
+        format — request counts and latencies by route, AWS and LLM call
+        instrumentation, cache hit/miss counters, and the resilience
+        primitives' own state (circuit breaker transitions, rate-limiter
+        rejections).
+      responses:
+        "200":
+          description: Metrics in Prometheus text exposition format.
+          content:
+            text/plain:
+              schema: { type: string }
+
+  # ================================================================
+  # Authentication
+  # ================================================================
+  /auth/whoami:
+    parameters: [*tenantHeader]
+    get:
+      operationId: auth.whoami
+      tags: [Authentication]
+      summary: Identify the caller
+      description: >-
+        Reflects back exactly what the authentication middleware resolved
+        from the presented credential — subject, tenant, roles and which
+        credential path was used. CloudOptix issues no session of its own;
+        this exists so a client can confirm its token, tenant header and
+        role mapping landed the way it expected before relying on them.
+      responses:
+        "200":
+          description: The resolved principal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhoAmIResponse" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Onboarding (public — see the tag description)
+  # ================================================================
+  /onboarding:
+    post:
+      operationId: onboarding.start
+      tags: [Onboarding]
+      summary: Start an onboarding conversation
+      security: []
+      description: >-
+        Opens a new conversation and returns the agent's opening turn. No
+        tenant exists yet — onboarding is what produces the specification a
+        tenant is created from. The returned `conversation_id` is the sole
+        access control for every later call in this tag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartOnboardingRequest" }
+      responses:
+        "201":
+          description: Conversation opened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /onboarding/{conversationID}/messages:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    post:
+      operationId: onboarding.send
+      tags: [Onboarding]
+      summary: Send a chat message
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: The agent's reply and updated state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /onboarding/{conversationID}/messages/stream:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    post:
+      operationId: onboarding.send_stream
+      tags: [Onboarding]
+      summary: Send a chat message, streamed
+      security: []
+      description: >-
+        The SSE surface for one chat turn. OnboardingService.Send is not
+        itself a token-streaming API, so this emits a `thinking` event
+        immediately, calls Send exactly once, then emits the completed
+        `turn` (the same `OnboardingState` the non-streaming endpoint
+        returns) followed by `done`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: >-
+            `text/event-stream` of `thinking`, `turn` (data: OnboardingState)
+            and `done` events, or a terminal `error` event carrying the same
+            status/code/detail fields `Problem` uses. A failure detected
+            before the stream is upgraded (a malformed body) is instead a
+            normal `400` below, not an `error` event.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /onboarding/{conversationID}:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    get:
+      operationId: onboarding.state
+      tags: [Onboarding]
+      summary: Get the current conversation state
+      security: []
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingState" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      operationId: onboarding.apply_edit
+      tags: [Onboarding]
+      summary: Apply a direct specification edit
+      security: []
+      description: >-
+        Applies an edit made in the review UI directly, rather than through
+        conversation — a JSON merge patch against the draft specification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApplyEditRequest" }
+      responses:
+        "200":
+          description: Updated state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /onboarding/{conversationID}/summary:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    get:
+      operationId: onboarding.summarize
+      tags: [Onboarding]
+      summary: Get the pre-approval review packet
+      security: []
+      responses:
+        "200":
+          description: Review summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingSummary" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /onboarding/{conversationID}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    post:
+      operationId: onboarding.approve
+      tags: [Onboarding]
+      summary: Approve and create the tenant
+      security: []
+      description: >-
+        Freezes the specification, creates the tenant, and returns both plus
+        the AWS onboarding instructions (the role to create, the external
+        id, the CloudFormation/Terraform snippet). The single transition
+        from "talking about it" to "it exists".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApproveOnboardingRequest" }
+      responses:
+        "201":
+          description: Tenant created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingResult" }
+              example:
+                tenant:
+                  id: "tn_01hz3k4x8y"
+                  slug: "acme-corp"
+                  name: "Acme Corp"
+                  plan: "standard"
+                  state: "active"
+                  demo: false
+                spec_version: { id: "sv_01hz3k4xar", version: 1, status: "approved" }
+                next_steps:
+                  external_id: "ext-8f2c1e40"
+                  trusted_principal_arn: "arn:aws:iam::111111111111:role/cloudoptix-platform"
+                  role_names: { read: "CloudOptixRead", execute: "CloudOptixExecute" }
+                  instructions:
+                    - "Create the CloudOptixRead role in your account using the provided CloudFormation template."
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /onboarding/{conversationID}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    post:
+      operationId: onboarding.cancel
+      tags: [Onboarding]
+      summary: Abandon the conversation
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CancelOnboardingRequest" }
+      responses:
+        "204": { description: Cancelled. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ================================================================
+  # Specs
+  # ================================================================
+  /specs/active:
+    parameters: [*tenantHeader]
+    get:
+      operationId: specs.get_active
+      tags: [Specs]
+      summary: Get the active specification version
+      responses:
+        "200":
+          description: The active version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpecVersion" }
+        <<: *commonErrors
+
+  /specs:
+    parameters: [*tenantHeader]
+    get:
+      operationId: specs.list_versions
+      tags: [Specs]
+      summary: List every specification version
+      responses:
+        "200":
+          description: All versions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SpecVersion" }
+        <<: *commonErrors
+
+  /specs/diff:
+    parameters: [*tenantHeader]
+    get:
+      operationId: specs.diff
+      tags: [Specs]
+      summary: Diff two specification versions
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: to
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: The ordered list of field-level changes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SpecChange" }
+        <<: *commonErrors
+
+  /specs/validate:
+    parameters: [*tenantHeader]
+    post:
+      operationId: specs.validate
+      tags: [Specs]
+      summary: Lint a candidate specification without persisting it
+      description: >-
+        Called on every keystroke-settled edit in the review UI, well before
+        an operator commits to a revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Spec" }
+      responses:
+        "200":
+          description: Validation result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationResult" }
+        <<: *commonErrors
+
+  /specs/revisions:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: specs.propose_revision
+      tags: [Specs]
+      summary: Propose a new draft revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProposeRevisionRequest" }
+      responses:
+        "201":
+          description: Draft created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpecVersion" }
+        <<: *commonErrors
+
+  /specs/import:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: specs.import_yaml
+      tags: [Specs]
+      summary: Import a specification from YAML
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportYAMLRequest" }
+      responses:
+        "201":
+          description: Imported draft.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpecVersion" }
+        <<: *commonErrors
+
+  /specs/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: specs.get
+      tags: [Specs]
+      summary: Get one specification version
+      responses:
+        "200":
+          description: The version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpecVersion" }
+        <<: *commonErrors
+
+  /specs/{id}/export:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: specs.export_yaml
+      tags: [Specs]
+      summary: Export a specification version as YAML
+      responses:
+        "200":
+          description: The YAML document, as a download.
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="spec.yaml"' }
+          content:
+            application/yaml:
+              schema: { type: string }
+        <<: *commonErrors
+
+  /specs/{id}/approve:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: specs.approve
+      tags: [Specs]
+      summary: Approve a draft revision
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApproveSpecRequest" }
+      responses:
+        "200":
+          description: The now-active version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpecVersion" }
+        <<: *commonErrors
+
+  /specs/{id}/reject:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: specs.reject
+      tags: [Specs]
+      summary: Reject a draft revision
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RejectSpecRequest" }
+      responses:
+        "204": { description: Rejected. }
+        <<: *commonErrors
+
+  # ================================================================
+  # Tenants
+  # ================================================================
+  /tenant:
+    parameters: [*tenantHeader]
+    get:
+      operationId: tenants.get
+      tags: [Tenants]
+      summary: Get the current tenant
+      responses:
+        "200":
+          description: The tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tenant" }
+        <<: *commonErrors
+    patch:
+      operationId: tenants.update
+      tags: [Tenants]
+      summary: Update tenant profile and settings
+      description: >-
+        The path's tenant scope always wins over anything the request body
+        claims — a caller cannot rename or reconfigure a different tenant by
+        putting a different `id` in the body.
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Tenant" }
+      responses:
+        "200":
+          description: Updated tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tenant" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Users
+  # ================================================================
+  /tenant/users:
+    parameters: [*tenantHeader]
+    get:
+      operationId: users.list
+      tags: [Users]
+      summary: List tenant members
+      parameters: [*cursorParam, *limitParam, *sortParam, *orderParam]
+      responses:
+        "200":
+          description: A page of users.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPage" }
+        <<: *commonErrors
+    post:
+      operationId: users.invite
+      tags: [Users]
+      summary: Invite a user
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InviteUserRequest" }
+      responses:
+        "201":
+          description: Invited.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        <<: *commonErrors
+
+  /tenant/users/{userID}:
+    parameters: [*tenantHeader, *userIDPathParam]
+    delete:
+      operationId: users.remove
+      tags: [Users]
+      summary: Remove a user from the tenant
+      parameters: [*idempotencyKey]
+      responses:
+        "204": { description: Removed. }
+        <<: *commonErrors
+
+  /tenant/users/{userID}/roles:
+    parameters: [*tenantHeader, *userIDPathParam]
+    patch:
+      operationId: users.update_roles
+      tags: [Users]
+      summary: Change a user's roles
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateRolesRequest" }
+      responses:
+        "204": { description: Updated. }
+        <<: *commonErrors
+
+  # ================================================================
+  # AWS Accounts
+  # ================================================================
+  /aws-accounts:
+    parameters: [*tenantHeader]
+    get:
+      operationId: aws_accounts.list
+      tags: [AWS Accounts]
+      summary: List connected AWS accounts
+      responses:
+        "200":
+          description: All accounts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AWSAccount" }
+        <<: *commonErrors
+    post:
+      operationId: aws_accounts.register
+      tags: [AWS Accounts]
+      summary: Register a new AWS account
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterAccountRequest" }
+      responses:
+        "201":
+          description: Registered, with connection instructions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: { $ref: "#/components/schemas/AWSAccount" }
+                  next_steps: { $ref: "#/components/schemas/AWSOnboardingInstructions" }
+        <<: *commonErrors
+
+  /aws-accounts/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: aws_accounts.get
+      tags: [AWS Accounts]
+      summary: Get one AWS account
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AWSAccount" }
+        <<: *commonErrors
+    delete:
+      operationId: aws_accounts.remove
+      tags: [AWS Accounts]
+      summary: Disconnect an AWS account
+      parameters: [*idempotencyKey]
+      responses:
+        "204": { description: Removed. }
+        <<: *commonErrors
+
+  /aws-accounts/{id}/verify:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: aws_accounts.verify
+      tags: [AWS Accounts]
+      summary: Verify CloudOptix can assume the granted roles
+      responses:
+        "200":
+          description: Verification result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: { $ref: "#/components/schemas/AWSAccount" }
+                  connection_check:
+                    type: object
+                    additionalProperties: true
+                    description: Per-scope AssumeRole probe results.
+        <<: *commonErrors
+
+  /aws-accounts/{id}/suspend:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: aws_accounts.suspend
+      tags: [AWS Accounts]
+      summary: Suspend an AWS account (stop discovery and automation)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SuspendAccountRequest" }
+      responses:
+        "204": { description: Suspended. }
+        <<: *commonErrors
+
+  /aws-accounts/{id}/instructions:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: aws_accounts.instructions
+      tags: [AWS Accounts]
+      summary: Get connection instructions again
+      responses:
+        "200":
+          description: Instructions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AWSOnboardingInstructions" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Discovery
+  # ================================================================
+  /discovery/runs:
+    parameters: [*tenantHeader]
+    get:
+      operationId: discovery.list_runs
+      tags: [Discovery]
+      summary: List recent discovery runs
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 200 }
+      responses:
+        "200":
+          description: Recent runs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DiscoveryRun" }
+        <<: *commonErrors
+    post:
+      operationId: discovery.run
+      tags: [Discovery]
+      summary: Run discovery on one or all accounts
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunDiscoveryRequest" }
+      responses:
+        "202":
+          description: Run started (or completed synchronously if `async` is false).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiscoveryRun" }
+        <<: *commonErrors
+
+  /discovery/status:
+    parameters: [*tenantHeader]
+    get:
+      operationId: discovery.status
+      tags: [Discovery]
+      summary: Get the tenant-level discovery health summary
+      responses:
+        "200":
+          description: Status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiscoveryStatus" }
+        <<: *commonErrors
+
+  /discovery/runs/{runID}:
+    parameters: [*tenantHeader, *runIDPathParam]
+    get:
+      operationId: discovery.get
+      tags: [Discovery]
+      summary: Get one discovery run
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiscoveryRun" }
+        <<: *commonErrors
+
+  /discovery/runs/{runID}/stream:
+    parameters: [*tenantHeader, *runIDPathParam]
+    get:
+      operationId: discovery.get_stream
+      tags: [Discovery]
+      summary: Stream a discovery run's progress
+      description: >-
+        Polls the same snapshot `Get` this tag's GET-by-id operation uses,
+        roughly once a second, and emits a `progress` event whenever the
+        snapshot changes, terminating with a `done` event once the run
+        reaches `completed`, `failed` or `partial`.
+      responses:
+        "200":
+          description: >-
+            `text/event-stream` of `progress` events (data: DiscoveryRun)
+            and a final `done` event. A run id that does not resolve (or
+            resolves to another tenant's run) ends the stream with a
+            terminal `error` event rather than an HTTP status, since the
+            response has already been upgraded by the time the first fetch
+            runs.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ================================================================
+  # Architecture (digital twin)
+  # ================================================================
+  /architecture/graph:
+    parameters: [*tenantHeader]
+    get:
+      operationId: architecture.graph
+      tags: [Architecture]
+      summary: Get the architecture graph
+      parameters:
+        - name: view
+          in: query
+          schema: { type: string, default: architecture, enum: [architecture, cost, performance, reliability, security, economics] }
+        - *accountIdQuery
+        - *regionQuery
+        - *environmentQuery
+        - { name: application_id, in: query, schema: { type: string } }
+        - { name: workload_id, in: query, schema: { type: string } }
+        - { name: kind, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: root_id, in: query, schema: { type: string }, description: Root a subgraph at this node. }
+        - { name: max_depth, in: query, schema: { type: integer } }
+        - { name: min_monthly_cost, in: query, schema: { type: number } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: collapse, in: query, schema: { type: boolean }, description: Group low-value leaf nodes for readability at scale. }
+      responses:
+        "200":
+          description: The graph.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TwinGraph" }
+        <<: *commonErrors
+
+  /architecture/cost-flow:
+    parameters: [*tenantHeader]
+    get:
+      operationId: architecture.cost_flow
+      tags: [Architecture]
+      summary: Get the cost-flow (Sankey) view
+      responses:
+        "200":
+          description: The cost flow graph.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostFlowGraph" }
+        <<: *commonErrors
+
+  /architecture/rebuild:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: architecture.rebuild
+      tags: [Architecture]
+      summary: Force a full twin rebuild from the current model
+      responses:
+        "200":
+          description: Rebuild result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        <<: *commonErrors
+
+  /architecture/nodes/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: architecture.node
+      tags: [Architecture]
+      summary: Get one twin node
+      responses:
+        "200":
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TwinNode" }
+        <<: *commonErrors
+
+  /architecture/nodes/{id}/dependents:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: architecture.dependents
+      tags: [Architecture]
+      summary: Get everything that depends on this node
+      parameters:
+        - name: max_depth
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Dependent nodes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TwinNode" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Resources (views over the twin — see handlers_twin.go's doc comment)
+  # ================================================================
+  /resources:
+    parameters: [*tenantHeader]
+    get:
+      operationId: resources.list
+      tags: [Resources]
+      summary: List resources
+      description: >-
+        Served by the same digital twin the Architecture tag serves — there
+        is no separate resource store to query. `TwinNode` already carries
+        everything a resource listing needs (kind, account, region, cost,
+        risk, tags, utilisation), and this endpoint is the twin's
+        architecture-view graph with `collapse` forced off so no resource is
+        summarised away.
+      parameters: [*accountIdQuery, *regionQuery, *environmentQuery]
+      responses:
+        "200":
+          description: A resource listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TwinNode" }
+                  total: { type: integer }
+        <<: *commonErrors
+
+  /resources/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: resources.get
+      tags: [Resources]
+      summary: Get one resource
+      responses:
+        "200":
+          description: The resource.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TwinNode" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Costs
+  # ================================================================
+  /costs/ingest:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: costs.ingest
+      tags: [Costs]
+      summary: Ingest billed cost data for a period
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IngestCostRequest" }
+      responses:
+        "202":
+          description: Ingestion result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngestResult" }
+        <<: *commonErrors
+
+  /costs/summary:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: costs.summary
+      tags: [Costs]
+      summary: Get the cost-intelligence headline
+      responses:
+        "200":
+          description: Summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostSummary" }
+        <<: *commonErrors
+
+  /costs/series:
+    parameters: [*tenantHeader, *fromParam, *toParam, *granularityQuery, *accountIdQuery, *regionQuery, *environmentQuery]
+    get:
+      operationId: costs.series
+      tags: [Costs]
+      summary: Get a cost time series
+      responses:
+        "200":
+          description: The series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostSeries" }
+        <<: *commonErrors
+
+  /costs/breakdown:
+    parameters: [*tenantHeader, *fromParam, *toParam, *accountIdQuery, *regionQuery, *environmentQuery]
+    get:
+      operationId: costs.breakdown
+      tags: [Costs]
+      summary: Get a grouped cost roll-up
+      parameters:
+        - name: dimension
+          in: query
+          schema: { type: string, default: service, example: service }
+      responses:
+        "200":
+          description: The breakdown.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostBreakdown" }
+        <<: *commonErrors
+
+  /costs/forecast:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: costs.forecast
+      tags: [Costs]
+      summary: Forecast future spend
+      parameters:
+        - name: horizon_days
+          in: query
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: The forecast.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostForecast" }
+        <<: *commonErrors
+
+  /costs/explain:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: costs.explain
+      tags: [Costs]
+      summary: Explain a cost movement
+      description: >-
+        Decomposes the change between the requested period and the
+        immediately preceding period of equal length into ranked
+        contributors, answering "why did cost change" rather than merely
+        reporting that it did.
+      responses:
+        "200":
+          description: The explanation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostExplanation" }
+              example:
+                current_total: { micros: 48210550000, amount: 48210.55, currency: USD, display: "$48,210.55" }
+                baseline_total: { micros: 41190020000, amount: 41190.02, currency: USD, display: "$41,190.02" }
+                delta: { micros: 7020530000, amount: 7020.53, currency: USD, display: "$7,020.53" }
+                delta_pct: 0.1705
+                contributors:
+                  - dimension: service
+                    key: AmazonRDS
+                    delta: { micros: 4110000000, amount: 4110.00, currency: USD, display: "$4,110.00" }
+                    share: 0.585
+                    note: "A read replica was added in us-east-1 on the 12th."
+                narrative: "Spend rose 17% week over week, driven mostly by a new RDS read replica."
+        <<: *commonErrors
+
+  /costs/anomalies/detect:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: costs.detect_anomalies
+      tags: [Costs]
+      summary: Run anomaly detection over a lookback window
+      parameters:
+        - name: lookback_days
+          in: query
+          schema: { type: integer, default: 14 }
+      responses:
+        "200":
+          description: Detected anomalies.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CostAnomaly" }
+        <<: *commonErrors
+
+  /costs/anomalies:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: costs.list_anomalies
+      tags: [Costs]
+      summary: List previously detected anomalies
+      responses:
+        "200":
+          description: Anomalies.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CostAnomaly" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Economics
+  # ================================================================
+  /economics/compute:
+    parameters: [*tenantHeader, *fromParam, *toParam, *idempotencyKey]
+    post:
+      operationId: economics.compute
+      tags: [Economics]
+      summary: Recompute footprints and unit economics for a period
+      responses:
+        "202":
+          description: Computation result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EconomicsResult" }
+        <<: *commonErrors
+
+  /economics/footprints:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: economics.list_footprints
+      tags: [Economics]
+      summary: List economic footprints at a scope
+      parameters:
+        - name: scope
+          in: query
+          schema: { $ref: "#/components/schemas/EconomicsScope" }
+          example: application
+      responses:
+        "200":
+          description: Footprints.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Footprint" }
+        <<: *commonErrors
+
+  /economics/footprints/{id}:
+    parameters: [*tenantHeader, *idPathParam, *fromParam, *toParam]
+    get:
+      operationId: economics.footprint
+      tags: [Economics]
+      summary: Get one scope's economic footprint
+      parameters:
+        - name: scope
+          in: query
+          schema: { $ref: "#/components/schemas/EconomicsScope" }
+      responses:
+        "200":
+          description: The footprint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Footprint" }
+        <<: *commonErrors
+
+  /economics/transactions:
+    parameters: [*tenantHeader]
+    get:
+      operationId: economics.list_transactions
+      tags: [Economics]
+      summary: List business transactions
+      responses:
+        "200":
+          description: Transactions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BusinessTransaction" }
+        <<: *commonErrors
+    post:
+      operationId: economics.upsert_transaction
+      tags: [Economics]
+      summary: Define or update a business transaction
+      parameters: [*idempotencyKey]
+      description: >-
+        Defining a business transaction is what tells CloudOptix its
+        denominator — checkout, payment, claim, search. Uses the platform's
+        `slo:write` permission, the closest granted-role fit to "economics
+        write" (there is no separate permission for it).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BusinessTransaction" }
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessTransaction" }
+        <<: *commonErrors
+
+  /economics/transactions/{id}/unit-economics:
+    parameters: [*tenantHeader, *idPathParam, *fromParam, *toParam]
+    get:
+      operationId: economics.unit_economics
+      tags: [Economics]
+      summary: Get unit economics for one transaction
+      responses:
+        "200":
+          description: Unit economics.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UnitEconomics" }
+        <<: *commonErrors
+
+  /economics/transactions/{id}/unit-economics/history:
+    parameters: [*tenantHeader, *idPathParam, *fromParam, *toParam]
+    get:
+      operationId: economics.unit_economics_history
+      tags: [Economics]
+      summary: Get unit economics history for one transaction
+      responses:
+        "200":
+          description: History, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UnitEconomics" }
+        <<: *commonErrors
+
+  /economics/efficiency-score:
+    parameters: [*tenantHeader]
+    get:
+      operationId: economics.efficiency_score
+      tags: [Economics]
+      summary: Get the efficiency score at a scope
+      parameters:
+        - name: scope
+          in: query
+          schema: { $ref: "#/components/schemas/EconomicsScope" }
+        - { name: scope_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The score.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EfficiencyScore" }
+        <<: *commonErrors
+
+  /economics/executive-summary:
+    parameters: [*tenantHeader]
+    get:
+      operationId: economics.executive_summary
+      tags: [Economics]
+      summary: Get the board-level summary
+      responses:
+        "200":
+          description: Executive summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutiveSummary" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Cost SLOs
+  # ================================================================
+  /cost-slos:
+    parameters: [*tenantHeader]
+    get:
+      operationId: cost_slos.list
+      tags: [Cost SLOs]
+      summary: List cost SLOs
+      responses:
+        "200":
+          description: SLOs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CostSLO" }
+        <<: *commonErrors
+    post:
+      operationId: cost_slos.upsert
+      tags: [Cost SLOs]
+      summary: Define or update a cost SLO
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CostSLO" }
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostSLO" }
+        <<: *commonErrors
+
+  /cost-slos/evaluate:
+    parameters: [*tenantHeader]
+    post:
+      operationId: cost_slos.evaluate
+      tags: [Cost SLOs]
+      summary: Evaluate every SLO's current error budget
+      responses:
+        "200":
+          description: Error budgets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EconomicErrorBudget" }
+        <<: *commonErrors
+
+  /cost-slos/budget-states:
+    parameters: [*tenantHeader]
+    get:
+      operationId: cost_slos.budget_states
+      tags: [Cost SLOs]
+      summary: Get the last-computed error budget for every SLO
+      responses:
+        "200":
+          description: Error budgets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EconomicErrorBudget" }
+        <<: *commonErrors
+
+  /cost-slos/{id}:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    delete:
+      operationId: cost_slos.delete
+      tags: [Cost SLOs]
+      summary: Delete a cost SLO
+      responses:
+        "204": { description: Deleted. }
+        <<: *commonErrors
+
+  # ================================================================
+  # Recommendations
+  # ================================================================
+  /recommendations/analyze:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: recommendations.analyze
+      tags: [Recommendations]
+      summary: Run the full rule set and produce a fresh recommendation set
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalyzeRequest" }
+      responses:
+        "202":
+          description: Analysis result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyzeResult" }
+        <<: *commonErrors
+
+  /recommendations:
+    parameters: [*tenantHeader, *cursorParam, *limitParam, *sortParam, *orderParam]
+    get:
+      operationId: recommendations.list
+      tags: [Recommendations]
+      summary: List recommendations
+      parameters:
+        - { name: status, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: category, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: action, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - *environmentQuery
+        - *accountIdQuery
+        - { name: application_id, in: query, schema: { type: string } }
+        - { name: resource_id, in: query, schema: { type: string } }
+        - { name: min_saving, in: query, schema: { type: number } }
+        - { name: min_confidence, in: query, schema: { type: number, minimum: 0, maximum: 1 } }
+        - { name: max_risk, in: query, schema: { $ref: "#/components/schemas/RiskLevel" } }
+        - { name: auto_executable_only, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: A page of recommendations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecommendationPage" }
+        <<: *commonErrors
+
+  /recommendations/summary:
+    parameters: [*tenantHeader]
+    get:
+      operationId: recommendations.summary
+      tags: [Recommendations]
+      summary: Get the recommendations headline
+      responses:
+        "200":
+          description: Summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecommendationSummary" }
+        <<: *commonErrors
+
+  /recommendations/rules:
+    parameters: [*tenantHeader]
+    get:
+      operationId: recommendations.list_rules
+      tags: [Recommendations]
+      summary: List the optimization rule catalog
+      responses:
+        "200":
+          description: Rules with their current calibration.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RuleInfo" }
+        <<: *commonErrors
+
+  /recommendations/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: recommendations.get
+      tags: [Recommendations]
+      summary: Get one recommendation
+      responses:
+        "200":
+          description: The recommendation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recommendation" }
+        <<: *commonErrors
+
+  /recommendations/{id}/explain:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: recommendations.explain
+      tags: [Recommendations]
+      summary: Get the full reasoning packet for one recommendation
+      description: >-
+        Evidence, confidence inputs, blast radius, risk factors, the policy
+        decision and — when the recommendation has run before — similar
+        historical outcomes.
+      responses:
+        "200":
+          description: The explanation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecommendationExplanation" }
+        <<: *commonErrors
+
+  /recommendations/{id}/dismiss:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: recommendations.dismiss
+      tags: [Recommendations]
+      summary: Dismiss a recommendation
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DismissRequest" }
+      responses:
+        "204": { description: Dismissed. }
+        <<: *commonErrors
+
+  /recommendations/{id}/snooze:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: recommendations.snooze
+      tags: [Recommendations]
+      summary: Snooze a recommendation until a later date
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SnoozeRequest" }
+      responses:
+        "204": { description: Snoozed. }
+        <<: *commonErrors
+
+  /recommendations/{recommendationID}/execution-plan:
+    parameters: [*tenantHeader, *recommendationIDPathParam, *idempotencyKey]
+    post:
+      operationId: recommendations.plan_execution
+      tags: [Recommendations]
+      summary: Build an execution plan from an approved recommendation
+      description: >-
+        Performs no mutation and always constructs a rollback plan. Also
+        reachable conceptually as the start of the Executions tag's
+        lifecycle — see that tag.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanExecutionRequest" }
+      responses:
+        "201":
+          description: The plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionPlan" }
+        <<: *commonErrors
+
+  /recommendations/{recommendationID}/policy-decision:
+    parameters: [*tenantHeader, *recommendationIDPathParam]
+    get:
+      operationId: recommendations.policy_decision
+      tags: [Recommendations]
+      summary: Get the current policy decision for a recommendation
+      description: >-
+        Runs a policy evaluation without executing anything — what the
+        recommendation list uses to show each item's governance state
+        (auto-executable, needs approval, prohibited).
+      responses:
+        "200":
+          description: The decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyDecision" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Simulations
+  # ================================================================
+  /simulations/mutate:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: simulations.mutate
+      tags: [Simulations]
+      summary: Search for alternative architectures
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MutateRequest" }
+      responses:
+        "202":
+          description: The simulation (candidates may still be generating).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+        <<: *commonErrors
+
+  /simulations/counterfactual:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: simulations.counterfactual
+      tags: [Simulations]
+      summary: Answer a what-if question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Scenario" }
+      responses:
+        "200":
+          description: The counterfactual answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Counterfactual" }
+              example:
+                scenario: { type: add_cache, label: "Add ElastiCache in front of the checkout DB" }
+                cost_delta: { micros: 640000000, amount: 640.00, currency: USD, display: "$640.00" }
+                cost_delta_pct: 0.081
+                risk: LOW
+                confidence: 0.78
+        <<: *commonErrors
+
+  /simulations:
+    parameters: [*tenantHeader, *cursorParam, *limitParam, *sortParam, *orderParam]
+    get:
+      operationId: simulations.list
+      tags: [Simulations]
+      summary: List simulations
+      responses:
+        "200":
+          description: A page of simulations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulationPage" }
+        <<: *commonErrors
+
+  /simulations/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: simulations.get
+      tags: [Simulations]
+      summary: Get one simulation
+      responses:
+        "200":
+          description: The simulation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Cost Compiler
+  # ================================================================
+  /compiler/compile:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: compiler.compile
+      tags: [Cost Compiler]
+      summary: Price an infrastructure-as-code change set
+      description: >-
+        Accepts the IaC artifact as a raw request body — a Terraform plan
+        JSON, a CloudFormation template, a Kubernetes manifest, whatever
+        `source` declares — rather than a JSON envelope, so a CI pipeline
+        can pipe `terraform show -json plan.out` straight in.
+      parameters:
+        - { name: source, in: query, schema: { $ref: "#/components/schemas/SourceKind" }, example: terraform_plan }
+        - { name: label, in: query, schema: { type: string }, example: "PR #482: add read replica" }
+        - { name: region, in: query, schema: { type: string } }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - name: assume_*
+          in: query
+          schema: { type: number }
+          description: >-
+            Any `assume_<key>=<number>` query parameter overrides a
+            usage-dependent resource's default assumption, e.g.
+            `assume_lambda_invocations_per_month=40000000`.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+          text/plain:
+            schema: { type: string }
+      responses:
+        "201":
+          description: The priced change set.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompilationResult" }
+        <<: *commonErrors
+
+  /compiler/compilations/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: compiler.get_compilation
+      tags: [Cost Compiler]
+      summary: Get a previous compilation
+      responses:
+        "200":
+          description: The compilation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompilationResult" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Cost Regression
+  # ================================================================
+  /compiler/compilations/{compilationID}/regression:
+    parameters: [*tenantHeader, *compilationIDPathParam, *idempotencyKey]
+    post:
+      operationId: regression.run
+      tags: [Cost Regression]
+      summary: Check a compilation against a regression suite
+      parameters:
+        - name: suite
+          in: query
+          schema: { type: string, default: default }
+      responses:
+        "200":
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegressionReport" }
+        <<: *commonErrors
+
+  /regression/suites:
+    parameters: [*tenantHeader]
+    get:
+      operationId: regression.list_suites
+      tags: [Cost Regression]
+      summary: List regression suites
+      responses:
+        "200":
+          description: Suites.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RegressionSuite" }
+        <<: *commonErrors
+    post:
+      operationId: regression.upsert_suite
+      tags: [Cost Regression]
+      summary: Define or update a regression suite
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegressionSuite" }
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegressionSuite" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Policies
+  # ================================================================
+  /policies/active:
+    parameters: [*tenantHeader]
+    get:
+      operationId: policies.get_active
+      tags: [Policies]
+      summary: Get the active policy
+      responses:
+        "200":
+          description: The active policy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        <<: *commonErrors
+
+  /policies/versions:
+    parameters: [*tenantHeader]
+    get:
+      operationId: policies.list_versions
+      tags: [Policies]
+      summary: List policy versions
+      parameters:
+        - { name: name, in: query, schema: { type: string }, required: true }
+      responses:
+        "200":
+          description: Versions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Policy" }
+        <<: *commonErrors
+
+  /policies:
+    parameters: [*tenantHeader, *idempotencyKey]
+    put:
+      operationId: policies.save
+      tags: [Policies]
+      summary: Save a new policy version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Policy" }
+      responses:
+        "200":
+          description: Saved (not yet active — see activate).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        <<: *commonErrors
+
+  /policies/validate:
+    parameters: [*tenantHeader]
+    post:
+      operationId: policies.validate
+      tags: [Policies]
+      summary: Validate a candidate policy without saving it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Policy" }
+      responses:
+        "200":
+          description: Validation result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationResult" }
+        <<: *commonErrors
+
+  /policies/simulate:
+    parameters: [*tenantHeader]
+    post:
+      operationId: policies.simulate
+      tags: [Policies]
+      summary: Preview a proposed policy's impact on current recommendations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Policy" }
+      responses:
+        "200":
+          description: Impact preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicySimulation" }
+        <<: *commonErrors
+
+  /policies/{id}/activate:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: policies.activate
+      tags: [Policies]
+      summary: Activate a saved policy version
+      responses:
+        "204": { description: Activated. }
+        <<: *commonErrors
+
+  # ================================================================
+  # Approvals
+  # ================================================================
+  /approvals:
+    parameters: [*tenantHeader, *cursorParam, *limitParam, *sortParam, *orderParam]
+    get:
+      operationId: approvals.list
+      tags: [Approvals]
+      summary: List approval requests
+      responses:
+        "200":
+          description: A page of approvals.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalPage" }
+        <<: *commonErrors
+    post:
+      operationId: approvals.request
+      tags: [Approvals]
+      summary: Manually request an approval
+      parameters: [*idempotencyKey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalRequest" }
+      responses:
+        "201":
+          description: Requested.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRequest" }
+        <<: *commonErrors
+
+  /approvals/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: approvals.get
+      tags: [Approvals]
+      summary: Get one approval request
+      responses:
+        "200":
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRequest" }
+        <<: *commonErrors
+
+  /approvals/{id}/decide:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: approvals.decide
+      tags: [Approvals]
+      summary: Approve or reject a request
+      description: >-
+        The voting principal, role and provenance (IP, user agent) are taken
+        from the authenticated caller, never from the request body — an
+        approval vote must record who actually decided.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecideApprovalRequest" }
+      responses:
+        "200":
+          description: Updated request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalRequest" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Automation
+  # ================================================================
+  /automation/process:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: automation.process
+      tags: [Automation]
+      summary: Run one autonomous optimization cycle
+      description: >-
+        Finds recommendations the active policy permits to auto-execute,
+        plans them, executes them within the maintenance window and
+        concurrency limits, and schedules validation. Normally invoked by a
+        scheduled worker, exposed here for on-demand and support use.
+      responses:
+        "200":
+          description: Cycle result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomousRunResult" }
+        <<: *commonErrors
+
+  /automation/learn:
+    parameters: [*tenantHeader, *idempotencyKey]
+    post:
+      operationId: automation.learn
+      tags: [Automation]
+      summary: Recompute rule calibrations from observed outcomes
+      responses:
+        "200":
+          description: Learning result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningResult" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Executions
+  # ================================================================
+  /executions:
+    parameters: [*tenantHeader, *cursorParam, *limitParam, *sortParam, *orderParam]
+    get:
+      operationId: executions.list
+      tags: [Executions]
+      summary: List execution plans
+      parameters:
+        - { name: state, in: query, schema: { type: array, items: { $ref: "#/components/schemas/PlanState" } }, style: form, explode: true }
+      responses:
+        "200":
+          description: A page of plans.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionPlanPage" }
+        <<: *commonErrors
+
+  /executions/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: executions.get
+      tags: [Executions]
+      summary: Get one execution plan
+      responses:
+        "200":
+          description: The plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionPlan" }
+        <<: *commonErrors
+
+  /executions/{id}/stream:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: executions.stream
+      tags: [Executions]
+      summary: Stream a plan's progress
+      description: >-
+        Polls `GetPlan` roughly once a second and emits a `progress` event
+        on every change, terminating with `done` once the plan reaches a
+        terminal state (`validated`, `rolled_back`, `cancelled` or
+        `rollback_failed`).
+      responses:
+        "200":
+          description: >-
+            `text/event-stream` of `progress` events (data: ExecutionPlan)
+            and a final `done` event. A plan id that does not resolve ends
+            the stream with a terminal `error` event, not an HTTP status —
+            the response has already been upgraded by the first fetch.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /executions/{id}/execute:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: executions.execute
+      tags: [Executions]
+      summary: Execute an approved plan
+      description: >-
+        Re-checks policy and approval state immediately before touching AWS
+        — approval at request time does not imply the plan is still safe to
+        run minutes or hours later.
+      responses:
+        "202":
+          description: Execution started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionPlan" }
+        <<: *commonErrors
+
+  /executions/{id}/cancel:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: executions.cancel
+      tags: [Executions]
+      summary: Cancel a plan before it executes
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CancelExecutionRequest" }
+      responses:
+        "204": { description: Cancelled. }
+        <<: *commonErrors
+
+  /executions/{id}/validate:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: executions.validate
+      tags: [Executions]
+      summary: Evaluate a completed change against its validation plan
+      responses:
+        "200":
+          description: Validation result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanValidationResult" }
+        <<: *commonErrors
+
+  /executions/{id}/rollback:
+    parameters: [*tenantHeader, *idPathParam, *idempotencyKey]
+    post:
+      operationId: executions.rollback
+      tags: [Executions]
+      summary: Reverse an executed plan
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RollbackRequest" }
+      responses:
+        "202":
+          description: Rollback started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionPlan" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Savings
+  # ================================================================
+  /savings/funnel:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: savings.funnel
+      tags: [Savings]
+      summary: Get the realized-savings funnel
+      description: >-
+        Potential → approved → planned → executed → validated → realized,
+        with leakage between each rung and CloudOptix's own prediction
+        accuracy. Served by AutomationService — there is no dedicated
+        Savings service, since a funnel is exactly what tracks the outcome
+        of the plans Automation executes.
+      responses:
+        "200":
+          description: The funnel.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavingsFunnel" }
+        <<: *commonErrors
+
+  # ================================================================
+  # Audit
+  # ================================================================
+  /audit:
+    parameters: [*tenantHeader]
+    get:
+      operationId: audit.query
+      tags: [Audit]
+      summary: Query the audit trail
+      parameters:
+        - *cursorParam
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: action, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: actor, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: outcome, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: subject_id, in: query, schema: { type: string } }
+        - *fromParam
+        - *toParam
+      responses:
+        "200":
+          description: A page of audit entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditEntryPage" }
+        <<: *commonErrors
+
+  /audit/verify:
+    parameters: [*tenantHeader, *fromParam, *toParam]
+    get:
+      operationId: audit.verify
+      tags: [Audit]
+      summary: Verify the audit trail's hash chain over a period
+      description: >-
+        The audit log is hash-chained; this recomputes and checks it,
+        detecting tampering or gaps rather than merely asserting the log is
+        trustworthy.
+      responses:
+        "200":
+          description: Verification result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        <<: *commonErrors
+
+  /audit/recommendations/{recommendationID}/timeline:
+    parameters: [*tenantHeader, *recommendationIDPathParam]
+    get:
+      operationId: audit.timeline
+      tags: [Audit]
+      summary: Get the full story of one change
+      description: >-
+        Assembles the recommendation, its policy decision, its approval, its
+        execution steps, its validation and its realized savings into one
+        ordered timeline.
+      responses:
+        "200":
+          description: The timeline, chronological.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEntry" }
+        <<: *commonErrors
+
+  # ================================================================
+  # AI Copilot
+  # ================================================================
+  /copilot/ask:
+    parameters: [*tenantHeader]
+    post:
+      operationId: copilot.ask
+      tags: [AI Copilot]
+      summary: Ask the copilot a question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AskCopilotRequest" }
+      responses:
+        "200":
+          description: A grounded answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CopilotAnswer" }
+              example:
+                answer: "Your RDS spend is up 22% this month, mostly from a new read replica in us-east-1 added on the 12th."
+                grounded: true
+                citations:
+                  - kind: cost_record
+                    id: "cr_9f2c"
+                    label: "AmazonRDS, us-east-1, August"
+                    value: "$4,110.00"
+                follow_ups:
+                  - "Would you like a recommendation to right-size that replica?"
+        <<: *commonErrors
+
+  /copilot/ask/stream:
+    parameters: [*tenantHeader]
+    post:
+      operationId: copilot.ask_stream
+      tags: [AI Copilot]
+      summary: Ask the copilot a question, streamed
+      description: >-
+        CopilotService.Ask is a single synchronous call, not a token stream
+        — there is no incremental-generation port. This emits a `thinking`
+        event, calls Ask once, then emits the finished answer as one
+        `answer` event followed by `done`, for a client that wants
+        consistent SSE handling across onboarding, copilot and job-progress
+        endpoints without pretending token-by-token generation exists where
+        it does not.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AskCopilotRequest" }
+      responses:
+        "200":
+          description: >-
+            `text/event-stream` of `thinking`, `answer` (data: CopilotAnswer)
+            and `done` events. A failure the copilot service itself raises
+            (grounding failure, an ungrounded model output) ends the stream
+            with a terminal `error` event; a malformed request body is
+            instead a normal `400` below, before the stream is upgraded.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /copilot/conversations:
+    parameters: [*tenantHeader, *cursorParam, *limitParam, *sortParam, *orderParam]
+    get:
+      operationId: copilot.list_conversations
+      tags: [AI Copilot]
+      summary: List copilot conversations
+      responses:
+        "200":
+          description: A page of conversations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationPage" }
+        <<: *commonErrors
+
+  /copilot/conversations/{id}:
+    parameters: [*tenantHeader, *idPathParam]
+    get:
+      operationId: copilot.get_conversation
+      tags: [AI Copilot]
+      summary: Get one conversation
+      responses:
+        "200":
+          description: The conversation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        <<: *commonErrors
+
+  /copilot/suggestions:
+    parameters: [*tenantHeader]
+    get:
+      operationId: copilot.suggestions
+      tags: [AI Copilot]
+      summary: Get suggested questions for the current tenant state
+      description: What keeps an empty copilot screen useful.
+      responses:
+        "200":
+          description: Suggested questions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        <<: *commonErrors
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        An OIDC-issued user JWT, an internal service token, or (in
+        non-production deployments only) the fixed development static
+        token. Validated per internal/infrastructure/auth: issuer, audience,
+        expiry and signing algorithm are all checked, and `alg: none` is
+        always rejected.
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-CloudOptix-Api-Key
+      description: A long-lived service API key, bound to exactly one tenant at issuance.
+
+  parameters:
+    # Every other path parameter (id, userID, runID, recommendationID,
+    # compilationID) is defined once as a YAML anchor under x-anchors above
+    # and reused by alias, rather than here — see that block's comment for
+    # why. ConversationID is the one exception: it appears only on the
+    # Onboarding tag's unauthenticated paths, so it is referenced there by
+    # $ref instead of an anchor, and this is that one component.
+    ConversationID:
+      name: conversationID
+      in: path
+      required: true
+      schema: { type: string }
+      example: "conv_01hz3k2p9q"
+
+  responses:
+    BadRequest:
+      description: The request was malformed or failed validation.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: No credential was presented, or it was invalid or expired.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: The caller is authenticated but lacks the required permission.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: >-
+        Nothing exists at this id within the caller's tenant — including
+        when the id belongs to a different tenant (see the Errors section
+        above).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: >-
+        An optimistic-concurrency conflict, or an Idempotency-Key reused
+        with a different request body.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    TooManyRequests:
+      description: The tenant's rate limit was exceeded.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before retrying.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    InternalError:
+      description: An unexpected error occurred. Detail is deliberately generic.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # -------------------------------------------------------------
+    # Common
+    # -------------------------------------------------------------
+    Problem:
+      type: object
+      description: >-
+        RFC 7807 problem+json, extended with a machine-readable `code` and,
+        for validation failures, field-level `issues`.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri, example: "https://docs.cloudoptix.io/errors/not-found" }
+        title: { type: string, example: "Not Found" }
+        status: { type: integer, example: 404 }
+        detail: { type: string, example: "recommendation rec_123 not found" }
+        instance: { type: string, example: "/api/v1/recommendations/rec_123" }
+        code: { type: string, example: "not_found" }
+        request_id: { type: string, example: "01hz3k4v9p8q7r6s5t4u3v2w" }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/ValidationIssue" }
+
+    ValidationIssue:
+      type: object
+      required: [path, code, message, severity]
+      properties:
+        path: { type: string, example: "name" }
+        code: { type: string, example: "required" }
+        message: { type: string, example: "name is required" }
+        severity: { $ref: "#/components/schemas/Severity" }
+        hint: { type: string }
+
+    ValidationResult:
+      type: object
+      properties:
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/ValidationIssue" }
+
+    Severity:
+      type: string
+      enum: [INFO, LOW, MEDIUM, HIGH, CRITICAL]
+
+    RiskLevel:
+      type: string
+      enum: [NONE, LOW, MEDIUM, HIGH, CRITICAL]
+
+    Criticality:
+      type: string
+      enum: [TIER_0, TIER_1, TIER_2, TIER_3, UNSET]
+
+    Provenance:
+      type: string
+      description: How CloudOptix came to believe a fact.
+      enum: [CONFIRMED, INFERRED, UNKNOWN, REQUIRES_USER_CONFIRMATION]
+
+    Confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: A 0..1 confidence score.
+
+    Money:
+      type: object
+      description: An exact monetary amount, stored as integer micros to avoid floating-point drift.
+      required: [micros, currency, amount, display]
+      properties:
+        micros: { type: integer, format: int64, example: 4110000000, description: "Exact amount in 1/1,000,000ths of a unit." }
+        currency: { type: string, example: USD }
+        amount: { type: number, example: 4110.00, description: "Convenience float; micros is authoritative." }
+        display: { type: string, example: "$4,110.00" }
+
+    Period:
+      type: object
+      required: [start, end]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+
+    Percentiles:
+      type: object
+      properties:
+        min: { type: number }
+        p50: { type: number }
+        p90: { type: number }
+        p95: { type: number }
+        p99: { type: number }
+        max: { type: number }
+        mean: { type: number }
+        std_dev: { type: number }
+
+    Tags:
+      type: object
+      additionalProperties: { type: string }
+
+    HealthCheckResult:
+      type: object
+      properties:
+        name: { type: string, example: postgres }
+        status: { type: string, enum: [ok, error] }
+        error: { type: string }
+
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        service: { type: string, example: cloudoptix-api }
+        version: { type: string, example: "1.4.2" }
+        uptime_seconds: { type: number }
+        checks: { type: array, items: { $ref: "#/components/schemas/HealthCheckResult" } }
+        checked_at: { type: string, format: date-time }
+
+    WhoAmIResponse:
+      type: object
+      properties:
+        subject: { type: string, example: "auth0|63f..." }
+        tenant_id: { type: string, example: "tn_01hz3k4x8y" }
+        email: { type: string, example: "alex@acme.com" }
+        name: { type: string, example: "Alex Rivera" }
+        roles:
+          type: array
+          items: { type: string, example: finops_analyst }
+        machine: { type: boolean }
+        auth_method: { type: string, enum: [oidc, service_token, dev_token, api_key] }
+
+    # -------------------------------------------------------------
+    # Onboarding
+    # -------------------------------------------------------------
+    StartOnboardingRequest:
+      type: object
+      properties:
+        actor: { type: string }
+        actor_email: { type: string, format: email }
+        initial_message: { type: string }
+        existing_tenant: { type: string, description: "Set when an established tenant is revising its specification." }
+
+    SendMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, example: "We run a checkout service on ECS Fargate behind an ALB." }
+
+    ApplyEditRequest:
+      type: object
+      properties:
+        patch: { type: object, additionalProperties: true, description: "A JSON merge patch against the draft specification." }
+        actor: { type: string }
+
+    ApproveOnboardingRequest:
+      type: object
+      required: [tenant_name, tenant_slug]
+      properties:
+        actor: { type: string }
+        actor_email: { type: string, format: email }
+        tenant_name: { type: string, example: "Acme Corp" }
+        tenant_slug: { type: string, example: "acme-corp" }
+        plan: { type: string, enum: [trial, standard, enterprise, internal], default: trial }
+
+    CancelOnboardingRequest:
+      type: object
+      properties:
+        reason: { type: string }
+
+    FieldState:
+      type: object
+      properties:
+        path: { type: string }
+        label: { type: string }
+        value: { type: string }
+        provenance: { $ref: "#/components/schemas/Provenance" }
+        rationale: { type: string }
+        source: { type: string }
+
+    OpenQuestion:
+      type: object
+      properties:
+        path: { type: string }
+        question: { type: string }
+        why: { type: string }
+        required: { type: boolean }
+        blocking: { type: boolean }
+        options: { type: array, items: { type: string } }
+        asked_count: { type: integer }
+
+    OnboardingState:
+      type: object
+      properties:
+        conversation_id: { type: string }
+        reply: { type: string }
+        stage: { type: string, enum: [organization, application, aws, workloads, business, objectives, governance, review] }
+        draft: { $ref: "#/components/schemas/Spec" }
+        completeness: { $ref: "#/components/schemas/SpecCompleteness" }
+        collected: { type: array, items: { $ref: "#/components/schemas/FieldState" } }
+        inferred: { type: array, items: { $ref: "#/components/schemas/FieldState" } }
+        unknown: { type: array, items: { $ref: "#/components/schemas/FieldState" } }
+        needs_confirmation: { type: array, items: { $ref: "#/components/schemas/FieldState" } }
+        open_questions: { type: array, items: { $ref: "#/components/schemas/OpenQuestion" } }
+        validation: { $ref: "#/components/schemas/ValidationResult" }
+        ready_for_review: { type: boolean }
+        suggestions: { type: array, items: { type: string } }
+        degraded: { type: boolean, description: "True when answered without the model." }
+
+    SummarySection:
+      type: object
+      properties:
+        title: { type: string }
+        fields: { type: array, items: { $ref: "#/components/schemas/FieldState" } }
+        note: { type: string }
+
+    OnboardingSummary:
+      type: object
+      properties:
+        conversation_id: { type: string }
+        spec: { $ref: "#/components/schemas/Spec" }
+        spec_yaml: { type: string }
+        completeness: { $ref: "#/components/schemas/SpecCompleteness" }
+        validation: { $ref: "#/components/schemas/ValidationResult" }
+        sections: { type: array, items: { $ref: "#/components/schemas/SummarySection" } }
+        what_happens_next: { type: array, items: { type: string } }
+        can_approve: { type: boolean }
+        blocking_reasons: { type: array, items: { type: string } }
+
+    AWSOnboardingInstructions:
+      type: object
+      properties:
+        external_id: { type: string, example: "ext-8f2c1e40" }
+        trusted_principal_arn: { type: string, example: "arn:aws:iam::111111111111:role/cloudoptix-platform" }
+        role_names: { type: object, additionalProperties: { type: string } }
+        policy_documents: { type: object, additionalProperties: { type: string } }
+        cloudformation_url: { type: string, format: uri }
+        terraform_module: { type: string }
+        instructions: { type: array, items: { type: string } }
+
+    OnboardingResult:
+      type: object
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+        spec_version: { $ref: "#/components/schemas/SpecVersion" }
+        next_steps: { $ref: "#/components/schemas/AWSOnboardingInstructions" }
+
+    # -------------------------------------------------------------
+    # Specs
+    # -------------------------------------------------------------
+    Spec:
+      type: object
+      description: >-
+        The full onboarding specification: organization, application, AWS
+        access, workloads, business context, objectives, optimization and
+        automation posture, governance, security, observability,
+        notifications and teams. Deliberately not expanded field by field
+        here — it is a large, evolving nested document (see
+        internal/domain/spec/spec.go, the source of truth) that a client
+        reads and writes as a structured whole via the onboarding and specs
+        endpoints, most of which never need to address a field within it
+        directly.
+      required: [api_version, kind]
+      properties:
+        api_version: { type: string, example: "cloudoptix.io/v1" }
+        kind: { type: string, example: "Specification" }
+        organization: { type: object, additionalProperties: true }
+        application: { type: object, additionalProperties: true }
+        aws: { type: object, additionalProperties: true }
+        workloads: { type: array, items: { type: object, additionalProperties: true } }
+        business: { type: object, additionalProperties: true }
+        objectives: { type: object, additionalProperties: true }
+        optimization: { type: object, additionalProperties: true }
+        automation: { type: object, additionalProperties: true }
+        governance: { type: object, additionalProperties: true }
+        security: { type: object, additionalProperties: true }
+        observability: { type: object, additionalProperties: true }
+        notifications: { type: object, additionalProperties: true }
+        teams: { type: array, items: { type: object, additionalProperties: true } }
+        open_questions: { type: array, items: { $ref: "#/components/schemas/OpenQuestion" } }
+
+    SpecCompleteness:
+      type: object
+      properties:
+        total_fields: { type: integer }
+        confirmed: { type: integer }
+        inferred: { type: integer }
+        unknown: { type: integer }
+        needs_confirmation: { type: integer }
+        score: { type: number }
+        ready_for_review: { type: boolean }
+        blocking_gaps: { type: array, items: { type: string } }
+
+    SpecChange:
+      type: object
+      properties:
+        path: { type: string }
+        kind: { type: string, enum: [added, removed, changed] }
+        before: { type: string }
+        after: { type: string }
+        impact: { type: string }
+        severity: { $ref: "#/components/schemas/Severity" }
+
+    SpecVersion:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        spec_id: { type: string }
+        version: { type: integer }
+        status: { type: string, enum: [draft, proposed, approved, rejected, superseded] }
+        spec: { $ref: "#/components/schemas/Spec" }
+        checksum: { type: string }
+        parent_id: { type: string }
+        diff: { type: array, items: { $ref: "#/components/schemas/SpecChange" } }
+        validation: { $ref: "#/components/schemas/ValidationResult" }
+
+    ProposeRevisionRequest:
+      type: object
+      properties:
+        patch: { type: object, additionalProperties: true }
+        actor: { type: string }
+
+    ApproveSpecRequest:
+      type: object
+      properties:
+        actor: { type: string }
+
+    RejectSpecRequest:
+      type: object
+      properties:
+        reason: { type: string }
+        actor: { type: string }
+
+    ImportYAMLRequest:
+      type: object
+      required: [yaml]
+      properties:
+        yaml: { type: string }
+        actor: { type: string }
+
+    # -------------------------------------------------------------
+    # Tenants / Users
+    # -------------------------------------------------------------
+    Tenant:
+      type: object
+      properties:
+        id: { type: string, example: "tn_01hz3k4x8y" }
+        slug: { type: string, example: "acme-corp" }
+        name: { type: string, example: "Acme Corp" }
+        plan: { type: string, enum: [trial, standard, enterprise, internal] }
+        quotas: { type: object, additionalProperties: true }
+        state: { type: string, enum: [active, suspended, closed] }
+        spec_id: { type: string }
+        active_spec_version: { type: integer }
+        active_policy_id: { type: string }
+        demo: { type: boolean }
+
+    Membership:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        roles:
+          type: array
+          items: { type: string, enum: [platform_admin, tenant_admin, architect, finops_analyst, sre, developer, auditor, viewer] }
+
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        subject: { type: string }
+        email: { type: string, format: email }
+        name: { type: string }
+        memberships: { type: array, items: { $ref: "#/components/schemas/Membership" } }
+        last_login_at: { type: string, format: date-time }
+        disabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    UserPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/User" } }
+
+    InviteUserRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        roles: { type: array, items: { type: string } }
+
+    UpdateRolesRequest:
+      type: object
+      required: [roles]
+      properties:
+        roles: { type: array, items: { type: string } }
+
+    PageEnvelope:
+      type: object
+      description: The cursor-pagination envelope every list endpoint shares.
+      properties:
+        next_cursor: { type: string }
+        total: { type: integer }
+
+    # -------------------------------------------------------------
+    # AWS Accounts
+    # -------------------------------------------------------------
+    AWSAccount:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        account_id: { type: string, example: "111111111111" }
+        alias: { type: string, example: "prod" }
+        environment: { type: string, example: "production" }
+        regions: { type: array, items: { type: string }, example: ["us-east-1", "us-west-2"] }
+        access_mode: { type: string, enum: [assume_role, simulated] }
+        role_arns: { type: object, additionalProperties: { type: string } }
+        external_id: { type: string }
+        session_prefix: { type: string }
+        state: { type: string, enum: [pending, connected, degraded, suspended, error] }
+        state_reason: { type: string }
+        granted_scopes: { type: array, items: { type: string, enum: [read, analyze, plan, execute] } }
+        missing_actions: { type: array, items: { type: string } }
+        is_payer: { type: boolean }
+        cur_bucket: { type: string }
+        cur_prefix: { type: string }
+        connected_at: { type: string, format: date-time }
+        last_verified_at: { type: string, format: date-time }
+        last_discovery_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RegisterAccountRequest:
+      type: object
+      required: [account_id]
+      properties:
+        account_id: { type: string, example: "111111111111" }
+        alias: { type: string }
+        environment: { type: string, example: "production" }
+        regions: { type: array, items: { type: string } }
+        access_mode: { type: string, enum: [assume_role, simulated], default: assume_role }
+        role_arns:
+          type: object
+          additionalProperties: { type: string }
+          description: "Map of role scope (read|analyze|plan|execute) to the ARN CloudOptix should assume for it."
+        is_payer: { type: boolean }
+        cur_bucket: { type: string }
+        cur_prefix: { type: string }
+
+    SuspendAccountRequest:
+      type: object
+      properties:
+        reason: { type: string }
+
+    # -------------------------------------------------------------
+    # Discovery
+    # -------------------------------------------------------------
+    ServiceScanResult:
+      type: object
+      properties:
+        service: { type: string, example: ec2 }
+        region: { type: string }
+        succeeded: { type: boolean }
+        count: { type: integer }
+        duration_ms: { type: integer }
+        api_call_count: { type: integer }
+        throttled: { type: integer }
+        error: { type: string }
+
+    DiscoveryRun:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        account_id: { type: string }
+        regions: { type: array, items: { type: string } }
+        trigger: { type: string, enum: [onboarding, scheduled, manual, post_execution] }
+        state: { type: string, enum: [running, completed, partial, failed] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        resources_discovered: { type: integer }
+        resources_updated: { type: integer }
+        resources_removed: { type: integer }
+        relationships_found: { type: integer }
+        metrics_collected: { type: integer }
+        service_results: { type: array, items: { $ref: "#/components/schemas/ServiceScanResult" } }
+        errors: { type: array, items: { type: string } }
+        coverage: { type: number }
+        duration_ms: { type: integer }
+
+    RunDiscoveryRequest:
+      type: object
+      properties:
+        account_id: { type: string, description: "Empty scans every account in the tenant." }
+        regions: { type: array, items: { type: string } }
+        services: { type: array, items: { type: string } }
+        trigger: { type: string, default: manual }
+        include_metrics: { type: boolean }
+        include_cost: { type: boolean }
+        async: { type: boolean }
+
+    DiscoveryStatus:
+      type: object
+      properties:
+        last_run_at: { type: string, format: date-time }
+        resource_count: { type: integer }
+        accounts_covered: { type: integer }
+        accounts_total: { type: integer }
+        coverage: { type: number }
+        in_progress: { type: boolean }
+        recent_runs: { type: array, items: { $ref: "#/components/schemas/DiscoveryRun" } }
+        permission_issues: { type: array, items: { type: string } }
+
+    # -------------------------------------------------------------
+    # Architecture (twin) / Resources
+    # -------------------------------------------------------------
+    TwinNode:
+      type: object
+      description: >-
+        One graph node with everything a resource detail panel or a
+        resource-list row needs — the twin is the resource model enriched
+        with cost, risk and topology, so this schema also serves the
+        Resources tag.
+      properties:
+        id: { type: string }
+        label: { type: string }
+        kind: { type: string, example: "ec2:instance" }
+        category: { type: string, example: compute }
+        service: { type: string, example: EC2 }
+        account_id: { type: string }
+        region: { type: string }
+        availability_zone: { type: string }
+        environment: { type: string }
+        state: { type: string, example: running }
+        monthly_cost: { $ref: "#/components/schemas/Money" }
+        economic_footprint: { $ref: "#/components/schemas/Money" }
+        cost_share: { type: number }
+        cpu: { $ref: "#/components/schemas/Percentiles" }
+        memory: { $ref: "#/components/schemas/Percentiles" }
+        latency_p99_ms: { type: number }
+        error_rate: { type: number }
+        availability: { type: number }
+        risk: { $ref: "#/components/schemas/RiskLevel" }
+        criticality: { $ref: "#/components/schemas/Criticality" }
+        owner: { type: string }
+        application: { type: string }
+        workload: { type: string }
+        tags: { $ref: "#/components/schemas/Tags" }
+        finding_count: { type: integer }
+        potential_saving: { $ref: "#/components/schemas/Money" }
+
+    TwinEdge:
+      type: object
+      properties:
+        source: { type: string }
+        target: { type: string }
+        kind: { type: string, example: "depends_on" }
+        weight: { type: number }
+
+    TwinStats:
+      type: object
+      properties:
+        node_count: { type: integer }
+        edge_count: { type: integer }
+        total_monthly_cost: { $ref: "#/components/schemas/Money" }
+
+    TwinGraph:
+      type: object
+      properties:
+        nodes: { type: array, items: { $ref: "#/components/schemas/TwinNode" } }
+        edges: { type: array, items: { $ref: "#/components/schemas/TwinEdge" } }
+        stats: { $ref: "#/components/schemas/TwinStats" }
+        view: { type: string }
+        legend: { type: object, additionalProperties: { type: string } }
+        truncated: { type: boolean }
+
+    CostFlowNode:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        kind: { type: string }
+        amount: { $ref: "#/components/schemas/Money" }
+        share: { type: number }
+
+    CostFlowLevel:
+      type: object
+      properties:
+        depth: { type: integer }
+        nodes: { type: array, items: { $ref: "#/components/schemas/CostFlowNode" } }
+
+    CostFlowLink:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+        amount: { $ref: "#/components/schemas/Money" }
+        basis: { type: string }
+
+    CostFlowGraph:
+      type: object
+      properties:
+        levels: { type: array, items: { $ref: "#/components/schemas/CostFlowLevel" } }
+        links: { type: array, items: { $ref: "#/components/schemas/CostFlowLink" } }
+        total: { $ref: "#/components/schemas/Money" }
+        unattributed: { $ref: "#/components/schemas/Money" }
+        period: { $ref: "#/components/schemas/Period" }
+
+    # -------------------------------------------------------------
+    # Costs
+    # -------------------------------------------------------------
+    IngestCostRequest:
+      type: object
+      required: [account_id]
+      properties:
+        account_id: { type: string }
+
+    IngestResult:
+      type: object
+      properties:
+        records_ingested: { type: integer }
+        period: { $ref: "#/components/schemas/Period" }
+        source: { type: string }
+        total_cost: { $ref: "#/components/schemas/Money" }
+        resource_coverage: { type: number }
+        duration_ms: { type: integer }
+
+    CostPoint:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/Period" }
+        amount: { $ref: "#/components/schemas/Money" }
+
+    CostSeries:
+      type: object
+      properties:
+        granularity: { type: string, enum: [hourly, daily, monthly] }
+        points: { type: array, items: { $ref: "#/components/schemas/CostPoint" } }
+        currency: { type: string }
+
+    BreakdownItem:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        amount: { $ref: "#/components/schemas/Money" }
+        share: { type: number }
+        prior_amount: { $ref: "#/components/schemas/Money" }
+        change_pct: { type: number }
+        resource_count: { type: integer }
+
+    CostBreakdown:
+      type: object
+      properties:
+        dimension: { type: string }
+        period: { $ref: "#/components/schemas/Period" }
+        total: { $ref: "#/components/schemas/Money" }
+        items: { type: array, items: { $ref: "#/components/schemas/BreakdownItem" } }
+
+    CostForecast:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/Period" }
+        expected: { $ref: "#/components/schemas/Money" }
+        low: { $ref: "#/components/schemas/Money" }
+        high: { $ref: "#/components/schemas/Money" }
+        method: { type: string, example: "holt_winters" }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+        based_on_days: { type: integer }
+        note: { type: string }
+
+    Contribution:
+      type: object
+      properties:
+        dimension: { type: string }
+        key: { type: string }
+        delta: { $ref: "#/components/schemas/Money" }
+        share: { type: number }
+        note: { type: string }
+
+    CostAnomaly:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        detected_at: { type: string, format: date-time }
+        period: { $ref: "#/components/schemas/Period" }
+        dimension: { type: string, enum: [service, account, usage_type, application] }
+        key: { type: string }
+        expected: { $ref: "#/components/schemas/Money" }
+        actual: { $ref: "#/components/schemas/Money" }
+        delta: { $ref: "#/components/schemas/Money" }
+        delta_pct: { type: number }
+        score: { type: number, description: "Robust z-score." }
+        severity: { $ref: "#/components/schemas/Severity" }
+        explanation: { type: string }
+        contributors: { type: array, items: { $ref: "#/components/schemas/Contribution" } }
+
+    LinkedChange:
+      type: object
+      properties:
+        kind: { type: string, enum: [execution, compilation, discovery_delta] }
+        id: { type: string }
+        label: { type: string }
+        at: { type: string, format: date-time }
+        cost_impact: { $ref: "#/components/schemas/Money" }
+        correlation: { type: number }
+
+    CostExplanation:
+      type: object
+      properties:
+        current_period: { $ref: "#/components/schemas/Period" }
+        baseline_period: { $ref: "#/components/schemas/Period" }
+        current_total: { $ref: "#/components/schemas/Money" }
+        baseline_total: { $ref: "#/components/schemas/Money" }
+        delta: { $ref: "#/components/schemas/Money" }
+        delta_pct: { type: number }
+        contributors: { type: array, items: { $ref: "#/components/schemas/Contribution" } }
+        narrative: { type: string }
+        linked_changes: { type: array, items: { $ref: "#/components/schemas/LinkedChange" } }
+
+    CostSummary:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/Period" }
+        total: { $ref: "#/components/schemas/Money" }
+        daily_average: { $ref: "#/components/schemas/Money" }
+        month_to_date: { $ref: "#/components/schemas/Money" }
+        prior_month: { $ref: "#/components/schemas/Money" }
+        change_pct: { type: number }
+        forecast: { $ref: "#/components/schemas/CostForecast" }
+        by_service: { $ref: "#/components/schemas/CostBreakdown" }
+        by_account: { $ref: "#/components/schemas/CostBreakdown" }
+        by_environment: { $ref: "#/components/schemas/CostBreakdown" }
+        by_application: { $ref: "#/components/schemas/CostBreakdown" }
+        trend: { $ref: "#/components/schemas/CostSeries" }
+        open_anomalies: { type: integer }
+        last_ingested_at: { type: string, format: date-time }
+        freshness: { type: string }
+
+    # -------------------------------------------------------------
+    # Economics / Cost SLOs
+    # -------------------------------------------------------------
+    EconomicsScope:
+      type: string
+      enum: [organization, account, environment, application, workload, business_capability, api, transaction, resource]
+
+    FootprintComponent:
+      type: object
+      properties:
+        resource_id: { type: string }
+        resource_name: { type: string }
+        kind: { type: string }
+        service: { type: string }
+        class: { type: string, enum: [direct, indirect, shared] }
+        amount: { $ref: "#/components/schemas/Money" }
+        allocation_share: { type: number }
+        basis: { type: string }
+        provenance: { $ref: "#/components/schemas/Provenance" }
+
+    Footprint:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        scope: { $ref: "#/components/schemas/EconomicsScope" }
+        scope_id: { type: string }
+        label: { type: string }
+        period: { $ref: "#/components/schemas/Period" }
+        direct: { $ref: "#/components/schemas/Money" }
+        indirect: { $ref: "#/components/schemas/Money" }
+        shared: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money" }
+        unattributed: { $ref: "#/components/schemas/Money" }
+        coverage: { type: number }
+        components: { type: array, items: { $ref: "#/components/schemas/FootprintComponent" } }
+
+    VolumeSource:
+      type: object
+      properties:
+        kind: { type: string, enum: [cloudwatch, declared, prometheus, alb_requests] }
+        namespace: { type: string }
+        metric_name: { type: string }
+        dimensions: { type: object, additionalProperties: { type: string } }
+
+    BusinessTransaction:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        name: { type: string, example: checkout }
+        description: { type: string }
+        application_id: { type: string }
+        workload_ids: { type: array, items: { type: string } }
+        path_share: { type: object, additionalProperties: { type: number } }
+        volume_source: { $ref: "#/components/schemas/VolumeSource" }
+        provenance: { $ref: "#/components/schemas/Provenance" }
+        criticality: { $ref: "#/components/schemas/Criticality" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Driver:
+      type: object
+      description: One contributor to a unit-economics movement (volume, unit cost, or mix change).
+      additionalProperties: true
+
+    UnitEconomics:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        transaction_id: { type: string }
+        name: { type: string }
+        period: { $ref: "#/components/schemas/Period" }
+        volume: { type: number }
+        total_cost: { $ref: "#/components/schemas/Money" }
+        cost_per_unit: { $ref: "#/components/schemas/Money" }
+        direct_per_unit: { $ref: "#/components/schemas/Money" }
+        shared_per_unit: { $ref: "#/components/schemas/Money" }
+        prior_cost_per_unit: { $ref: "#/components/schemas/Money" }
+        change_pct: { type: number }
+        drivers: { type: array, items: { $ref: "#/components/schemas/Driver" } }
+
+    EconomicsResult:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/Period" }
+        footprints_computed: { type: integer }
+        total_attributed: { $ref: "#/components/schemas/Money" }
+        total_unattributed: { $ref: "#/components/schemas/Money" }
+        coverage: { type: number }
+        transactions_priced: { type: integer }
+        duration_ms: { type: integer }
+
+    EfficiencyFactor:
+      type: object
+      description: One weighted input into an efficiency score.
+      additionalProperties: true
+
+    EfficiencyScore:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        scope: { $ref: "#/components/schemas/EconomicsScope" }
+        scope_id: { type: string }
+        label: { type: string }
+        period: { $ref: "#/components/schemas/Period" }
+        score: { type: number }
+        grade: { type: string, example: B+ }
+        factors: { type: array, items: { $ref: "#/components/schemas/EfficiencyFactor" } }
+        prior_score: { type: number }
+        delta: { type: number }
+        waste_ratio: { type: number }
+        total_spend: { $ref: "#/components/schemas/Money" }
+        identified_waste: { $ref: "#/components/schemas/Money" }
+        computed_at: { type: string, format: date-time }
+
+    BreachAction:
+      type: object
+      description: What CloudOptix does when a cost SLO's error budget is exhausted.
+      additionalProperties: true
+
+    CostSLO:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        kind: { type: string, description: "Money-denominated or ratio-denominated (waste, efficiency)." }
+        direction: { type: string }
+        scope: { $ref: "#/components/schemas/EconomicsScope" }
+        scope_id: { type: string }
+        transaction_id: { type: string }
+        target: { $ref: "#/components/schemas/Money" }
+        target_ratio: { type: number }
+        window: { type: string, enum: [calendar_month, rolling_30d, rolling_7d] }
+        error_budget_pct: { type: number, example: 0.05 }
+        breach_actions: { type: array, items: { $ref: "#/components/schemas/BreachAction" } }
+        owner: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    EconomicErrorBudget:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        slo_id: { type: string }
+        slo_name: { type: string }
+        kind: { type: string }
+        period: { $ref: "#/components/schemas/Period" }
+        target: { $ref: "#/components/schemas/Money" }
+        budget_amount: { $ref: "#/components/schemas/Money" }
+        actual: { $ref: "#/components/schemas/Money" }
+        consumed: { $ref: "#/components/schemas/Money" }
+        remaining: { $ref: "#/components/schemas/Money" }
+        consumed_ratio: { type: number }
+        burn_rate: { type: number, description: "1.0 lands exactly at zero at window end; 2.0 burns twice as fast." }
+
+    ExecutiveSummary:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/Period" }
+        monthly_spend: { $ref: "#/components/schemas/Money" }
+        forecast_month_end: { $ref: "#/components/schemas/Money" }
+        prior_month_spend: { $ref: "#/components/schemas/Money" }
+        spend_change_pct: { type: number }
+        potential_savings: { $ref: "#/components/schemas/Money" }
+        realized_savings: { $ref: "#/components/schemas/Money" }
+        realized_annualized: { $ref: "#/components/schemas/Money" }
+        waste_pct: { type: number }
+        efficiency_score: { type: number }
+        efficiency_grade: { type: string }
+        cost_slos_healthy: { type: integer }
+        cost_slos_at_risk: { type: integer }
+        cost_slos_breached: { type: integer }
+        budget_states: { type: array, items: { $ref: "#/components/schemas/EconomicErrorBudget" } }
+        top_opportunities: { type: array, items: { $ref: "#/components/schemas/Recommendation" } }
+        top_transactions: { type: array, items: { $ref: "#/components/schemas/UnitEconomics" } }
+        savings_funnel: { $ref: "#/components/schemas/SavingsFunnel" }
+        generated_at: { type: string, format: date-time }
+
+    # -------------------------------------------------------------
+    # Recommendations
+    # -------------------------------------------------------------
+    AnalyzeRequest:
+      type: object
+      properties:
+        account_ids: { type: array, items: { type: string } }
+        environments: { type: array, items: { type: string } }
+        categories: { type: array, items: { type: string } }
+        rule_ids: { type: array, items: { type: string } }
+        generate_narratives: { type: boolean, description: "Ask the LLM to write human explanations; never affects which recommendations exist or their scores." }
+        async: { type: boolean }
+
+    AnalyzeResult:
+      type: object
+      properties:
+        run_id: { type: string }
+        resources_analyzed: { type: integer }
+        rules_evaluated: { type: integer }
+        findings_produced: { type: integer }
+        recommendations_created: { type: integer }
+        superseded: { type: integer }
+        mutually_exclusive_alternatives:
+          type: integer
+          description: >-
+            How many of recommendations_created are alternatives within a
+            conflict group and therefore excluded from total_monthly_saving.
+        total_monthly_saving: { $ref: "#/components/schemas/Money" }
+        total_annual_saving: { $ref: "#/components/schemas/Money" }
+        auto_executable: { type: integer }
+        requiring_approval: { type: integer }
+        prohibited: { type: integer }
+        duration_ms: { type: integer }
+        warnings: { type: array, items: { type: string } }
+
+    Finding:
+      type: object
+      description: The evidenced observation a recommendation is built from.
+      additionalProperties: true
+
+    StateSnapshot:
+      type: object
+      description: A resource's configuration before or after a proposed change.
+      additionalProperties: true
+
+    ConfidenceInput:
+      type: object
+      description: One input into a recommendation's confidence score.
+      additionalProperties: true
+
+    RiskAssessment:
+      type: object
+      description: The structured risk assessment behind a recommendation's risk level.
+      additionalProperties: true
+
+    BlastRadius:
+      type: object
+      description: What else is affected if this recommendation's action runs.
+      additionalProperties: true
+
+    Recommendation:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        finding: { $ref: "#/components/schemas/Finding" }
+        title: { type: string }
+        rationale: { type: string }
+        action: { type: string, example: "rightsize_instance" }
+        parameters: { type: object, additionalProperties: true, description: "The only input the executor reads — never re-derived from prose." }
+        current_state: { $ref: "#/components/schemas/StateSnapshot" }
+        proposed_state: { $ref: "#/components/schemas/StateSnapshot" }
+        estimated_monthly_saving: { $ref: "#/components/schemas/Money" }
+        estimated_annual_saving: { $ref: "#/components/schemas/Money" }
+        implementation_cost: { $ref: "#/components/schemas/Money" }
+        payback_days: { type: number }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+        confidence_basis: { type: array, items: { $ref: "#/components/schemas/ConfidenceInput" } }
+        risk: { $ref: "#/components/schemas/RiskAssessment" }
+        blast_radius: { $ref: "#/components/schemas/BlastRadius" }
+        reversibility: { type: string }
+        complexity: { type: string }
+        priority_score: { type: number }
+        rank: { type: integer }
+        conflict_domain:
+          type: string
+          description: >-
+            What this change contends for on its resource. Two recommendations
+            that target the same resource in the same domain are mutually
+            exclusive; changes in different domains compose.
+        conflict_group_id:
+          type: string
+          description: The set of mutually exclusive recommendations this one belongs to. Absent when it competes with nothing.
+        mutually_exclusive:
+          type: boolean
+          description: True when at most one member of this recommendation's conflict group can be applied.
+        alternative_ids:
+          type: array
+          items: { type: string }
+          description: The other members of this recommendation's conflict group, in the order the priority formula ranks them.
+        preferred_alternative_id:
+          type: string
+          description: >-
+            The member of this conflict group CloudOptix recommends instead of
+            this one. Empty on the recommended change. A recommendation with
+            this set is excluded from every savings total, because its saving
+            is the same money another recommendation already counts.
+        status: { type: string, enum: [open, dismissed, snoozed, planned, executed, superseded] }
+        status_reason: { type: string }
+        snoozed_until: { type: string, format: date-time }
+        requires_approval: { type: boolean }
+        policy_decision_id: { type: string }
+        auto_executable: { type: boolean }
+        narrative: { type: string, description: "LLM-generated explanation; decorative — removing it changes nothing about what executes." }
+
+    RecommendationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/Recommendation" } }
+
+    RecommendationSummary:
+      type: object
+      properties:
+        open: { type: integer }
+        total_monthly_saving: { $ref: "#/components/schemas/Money" }
+        by_category: { type: object, additionalProperties: { type: integer } }
+        saving_by_category: { type: object, additionalProperties: { $ref: "#/components/schemas/Money" } }
+        by_risk: { type: object, additionalProperties: { type: integer } }
+        auto_executable: { type: integer }
+        awaiting_approval: { type: integer }
+        mutually_exclusive_alternatives:
+          type: integer
+          description: >-
+            How many open recommendations are alternatives to another one and
+            therefore excluded from total_monthly_saving and
+            saving_by_category. Counts include them; money does not.
+
+    RiskFactor:
+      type: object
+      description: One factor contributing to a recommendation's risk assessment.
+      additionalProperties: true
+
+    RuleCalibration:
+      type: object
+      description: A rule's learned accuracy calibration from observed outcomes.
+      additionalProperties: true
+
+    Outcome:
+      type: object
+      description: A historical execution outcome used for "similar past changes".
+      additionalProperties: true
+
+    RecommendationExplanation:
+      type: object
+      properties:
+        recommendation: { $ref: "#/components/schemas/Recommendation" }
+        evidence: { type: array, items: { type: object, additionalProperties: true } }
+        confidence_inputs: { type: array, items: { $ref: "#/components/schemas/ConfidenceInput" } }
+        risk_factors: { type: array, items: { $ref: "#/components/schemas/RiskFactor" } }
+        blast_radius: { $ref: "#/components/schemas/BlastRadius" }
+        affected_nodes: { type: array, items: { $ref: "#/components/schemas/TwinNode" } }
+        alternatives:
+          type: array
+          items: { $ref: "#/components/schemas/Recommendation" }
+          description: >-
+            The other ways of fixing the same problem, ranked, so a reviewer
+            sees every option and which one CloudOptix recommends. Empty when
+            this recommendation competes with nothing.
+        policy_decision: { $ref: "#/components/schemas/PolicyDecision" }
+        calibration: { $ref: "#/components/schemas/RuleCalibration" }
+        rollback_summary: { type: string }
+        narrative: { type: string }
+        similar_outcomes: { type: array, items: { $ref: "#/components/schemas/Outcome" } }
+
+    RuleInfo:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        action: { type: string }
+        description: { type: string }
+        kinds: { type: array, items: { type: string } }
+        enabled: { type: boolean }
+        thresholds: { type: object, additionalProperties: true }
+        calibration: { $ref: "#/components/schemas/RuleCalibration" }
+
+    DismissRequest:
+      type: object
+      properties:
+        reason: { type: string }
+
+    SnoozeRequest:
+      type: object
+      required: [until]
+      properties:
+        until: { type: string, format: date-time }
+        reason: { type: string }
+
+    # -------------------------------------------------------------
+    # Simulations / Cost Compiler / Cost Regression
+    # -------------------------------------------------------------
+    MutateRequest:
+      type: object
+      properties:
+        scope: { type: string, enum: [application, workload, account] }
+        scope_id: { type: string }
+        name: { type: string }
+        risk_tolerance: { type: string }
+        patterns: { type: array, items: { type: string } }
+        max_candidates: { type: integer }
+
+    Assumption:
+      type: object
+      description: A stated modelling assumption behind a simulation or counterfactual result.
+      additionalProperties: true
+
+    Candidate:
+      type: object
+      description: One alternative architecture a mutation search produced.
+      additionalProperties: true
+
+    Weights:
+      type: object
+      description: The scoring weights (cost, performance, reliability, ...) a mutation search used.
+      additionalProperties: true
+
+    Simulation:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        name: { type: string }
+        scope: { type: string, enum: [application, workload, account] }
+        scope_id: { type: string }
+        kind: { type: string, enum: [architecture_mutation, counterfactual] }
+        baseline_cost: { $ref: "#/components/schemas/Money" }
+        candidates: { type: array, items: { $ref: "#/components/schemas/Candidate" } }
+        weights: { $ref: "#/components/schemas/Weights" }
+        assumptions: { type: array, items: { $ref: "#/components/schemas/Assumption" } }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        status: { type: string }
+        error: { type: string }
+
+    SimulationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/Simulation" } }
+
+    Scenario:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [traffic_change, platform_change, database_change, add_cache, remove_nat, add_vpc_endpoint, spot_adoption, region_change, commitment_purchase, storage_class_change, replica_change, custom]
+        label: { type: string }
+        parameters: { type: object, additionalProperties: true }
+        scope_id: { type: string }
+
+    StateProjection:
+      type: object
+      description: The modelled state of an architecture under a scenario.
+      additionalProperties: true
+
+    Counterfactual:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        scenario: { $ref: "#/components/schemas/Scenario" }
+        question: { type: string }
+        current_state: { $ref: "#/components/schemas/StateProjection" }
+        proposed_state: { $ref: "#/components/schemas/StateProjection" }
+        cost_delta: { $ref: "#/components/schemas/Money" }
+        cost_delta_pct: { type: number }
+        annual_cost_delta: { $ref: "#/components/schemas/Money" }
+        performance_delta: { type: string }
+        reliability_delta: { type: string }
+        security_delta: { type: string }
+        risk: { $ref: "#/components/schemas/RiskLevel" }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+        assumptions: { type: array, items: { $ref: "#/components/schemas/Assumption" } }
+        caveats: { type: array, items: { type: string } }
+        narrative: { type: string }
+        computed_at: { type: string, format: date-time }
+
+    SourceKind:
+      type: string
+      enum: [terraform_plan, terraform_hcl, cloudformation, kubernetes_manifest, helm_release, live_topology]
+
+    PricedChange:
+      type: object
+      description: One infrastructure change with its priced economic consequence.
+      additionalProperties: true
+
+    CompilationResult:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        source: { $ref: "#/components/schemas/SourceKind" }
+        label: { type: string }
+        changes: { type: array, items: { $ref: "#/components/schemas/PricedChange" } }
+        baseline_monthly: { $ref: "#/components/schemas/Money" }
+        projected_monthly: { $ref: "#/components/schemas/Money" }
+        monthly_delta: { $ref: "#/components/schemas/Money" }
+        annual_delta: { $ref: "#/components/schemas/Money" }
+        delta_pct: { type: number }
+
+    RegressionCheck:
+      type: object
+      description: One budget assertion in a regression suite ("monthly delta must not exceed $X").
+      additionalProperties: true
+
+    RegressionSuite:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        name: { type: string }
+        version: { type: integer }
+        checks: { type: array, items: { $ref: "#/components/schemas/RegressionCheck" } }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    CheckResult:
+      type: object
+      description: One assertion's pass/fail outcome.
+      additionalProperties: true
+
+    RegressionReport:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        compilation_id: { type: string }
+        suite_name: { type: string }
+        verdict: { type: string, enum: [pass, warn, fail] }
+        results: { type: array, items: { $ref: "#/components/schemas/CheckResult" } }
+        monthly_delta: { $ref: "#/components/schemas/Money" }
+        annual_delta: { $ref: "#/components/schemas/Money" }
+        summary: { type: string }
+        required_action: { type: string, example: "Architecture review required" }
+
+    # -------------------------------------------------------------
+    # Policies / Approvals
+    # -------------------------------------------------------------
+    Match:
+      type: object
+      description: A policy rule's match predicate (action, category, risk, environment, ...).
+      additionalProperties: true
+
+    PolicyRule:
+      type: object
+      properties:
+        id: { type: string }
+        description: { type: string }
+        match: { $ref: "#/components/schemas/Match" }
+        effect: { type: string, enum: [auto_execute, require_approval, prohibit, advisory] }
+        approvers: { type: array, items: { type: string } }
+        min_approvals: { type: integer }
+        require_distinct_approver: { type: boolean }
+        maintenance_windows: { type: array, items: { type: string } }
+        reason: { type: string }
+
+    Policy:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        version: { type: integer }
+        rules: { type: array, items: { $ref: "#/components/schemas/PolicyRule" } }
+        default_effect: { type: string, enum: [auto_execute, require_approval, prohibit, advisory], description: "Validation refuses auto_execute here — an unmatched action is by definition unreviewed." }
+        enabled: { type: boolean }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time }
+        checksum: { type: string }
+
+    PolicyDecision:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        recommendation_id: { type: string }
+        policy_id: { type: string }
+        policy_version: { type: integer }
+        policy_checksum: { type: string }
+        effect: { type: string, enum: [auto_execute, require_approval, prohibit, advisory] }
+        matched_rules: { type: array, items: { type: string } }
+        deciding_rule: { type: string }
+        reason: { type: string }
+        explanation: { type: array, items: { type: string } }
+        requires_approval: { type: boolean }
+        approvers: { type: array, items: { type: string } }
+        min_approvals: { type: integer }
+        require_distinct_approver: { type: boolean }
+        maintenance_windows: { type: array, items: { type: string } }
+        input_digest: { type: string }
+
+    PolicySimulationChange:
+      type: object
+      properties:
+        recommendation_id: { type: string }
+        title: { type: string }
+        from: { type: string }
+        to: { type: string }
+        monthly_saving: { $ref: "#/components/schemas/Money" }
+
+    PolicySimulation:
+      type: object
+      properties:
+        policy_name: { type: string }
+        evaluated: { type: integer }
+        auto_execute: { type: integer }
+        require_approval: { type: integer }
+        prohibited: { type: integer }
+        advisory: { type: integer }
+        changes: { type: array, items: { $ref: "#/components/schemas/PolicySimulationChange" } }
+        auto_executable_saving: { $ref: "#/components/schemas/Money" }
+        warnings: { type: array, items: { type: string } }
+
+    ApprovalContext:
+      type: object
+      properties:
+        monthly_saving: { $ref: "#/components/schemas/Money" }
+        annual_saving: { $ref: "#/components/schemas/Money" }
+        monthly_cost_delta: { $ref: "#/components/schemas/Money" }
+        confidence: { $ref: "#/components/schemas/Confidence" }
+        risk_level: { $ref: "#/components/schemas/RiskLevel" }
+        blast_summary: { type: string }
+        environment: { type: string }
+        affected_resources: { type: array, items: { type: string } }
+        rollback_plan: { type: string }
+        validation_plan: { type: string }
+        policy_reason: { type: string }
+        diff: { type: string }
+
+    ApprovalResponse:
+      type: object
+      properties:
+        principal: { type: string }
+        role: { type: string }
+        approved: { type: boolean }
+        comment: { type: string }
+        at: { type: string, format: date-time }
+        ip_address: { type: string }
+        user_agent: { type: string }
+
+    ApprovalRequest:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        subject_kind: { type: string, enum: [execution_plan, policy, aws_connection, commitment_purchase] }
+        subject_id: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        context: { $ref: "#/components/schemas/ApprovalContext" }
+        policy_decision_id: { type: string }
+        required_roles: { type: array, items: { type: string } }
+        min_approvals: { type: integer }
+        require_distinct_approver: { type: boolean }
+        state: { type: string, enum: [pending, approved, rejected, expired, withdrawn] }
+        responses: { type: array, items: { $ref: "#/components/schemas/ApprovalResponse" } }
+        requested_by: { type: string }
+        requested_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        decided_at: { type: string, format: date-time }
+        execute_after: { type: string, format: date-time }
+
+    ApprovalPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/ApprovalRequest" } }
+
+    DecideApprovalRequest:
+      type: object
+      required: [approved]
+      properties:
+        approved: { type: boolean }
+        comment: { type: string }
+
+    # -------------------------------------------------------------
+    # Automation / Executions / Savings
+    # -------------------------------------------------------------
+    PlanExecutionRequest:
+      type: object
+      properties:
+        dry_run: { type: boolean, description: "Runs every precondition and snapshot step, replacing mutating calls with their AWS dry-run equivalent." }
+        scheduled_for: { type: string, format: date-time }
+
+    PlanState:
+      type: string
+      enum: [draft, awaiting_approval, approved, scheduled, preflight, executing, executed, validating, validated, failed, rolling_back, rolled_back, rollback_failed, cancelled]
+
+    Step:
+      type: object
+      description: One step of an execution plan (precondition, snapshot, mutation, or a rollback/validation step).
+      additionalProperties: true
+
+    Snapshot:
+      type: object
+      description: Captured pre-change state, kept for rollback.
+      additionalProperties: true
+
+    RollbackPlan:
+      type: object
+      description: The steps that reverse this plan's mutation.
+      additionalProperties: true
+
+    ValidationPlan:
+      type: object
+      description: What is checked after execution to confirm the change worked as intended.
+      additionalProperties: true
+
+    ExecutionPlan:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        recommendation_id: { type: string }
+        action: { type: string }
+        title: { type: string }
+        account_id: { type: string }
+        region: { type: string }
+        environment: { type: string }
+        resource_ids: { type: array, items: { type: string } }
+        steps: { type: array, items: { $ref: "#/components/schemas/Step" } }
+        snapshots: { type: array, items: { $ref: "#/components/schemas/Snapshot" } }
+        rollback: { $ref: "#/components/schemas/RollbackPlan" }
+        validation: { $ref: "#/components/schemas/ValidationPlan" }
+        expected_monthly_saving: { $ref: "#/components/schemas/Money" }
+        baseline_monthly_cost: { $ref: "#/components/schemas/Money" }
+        state: { $ref: "#/components/schemas/PlanState" }
+        state_reason: { type: string }
+        approval_id: { type: string }
+        policy_decision_id: { type: string }
+        scheduled_for: { type: string, format: date-time }
+        dry_run: { type: boolean }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    ExecutionPlanPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/ExecutionPlan" } }
+
+    CancelExecutionRequest:
+      type: object
+      properties:
+        reason: { type: string }
+
+    RollbackRequest:
+      type: object
+      properties:
+        reason: { type: string }
+
+    PlanValidationResult:
+      type: object
+      description: The outcome of checking a completed change against its validation plan.
+      additionalProperties: true
+
+    AutonomousRunResult:
+      type: object
+      properties:
+        considered: { type: integer }
+        planned: { type: integer }
+        executed: { type: integer }
+        skipped: { type: integer }
+        failed: { type: integer }
+        rolled_back: { type: integer }
+        monthly_saving: { $ref: "#/components/schemas/Money" }
+        skip_reasons: { type: object, additionalProperties: { type: integer } }
+        duration_ms: { type: integer }
+
+    LearningResult:
+      type: object
+      properties:
+        outcomes_considered: { type: integer }
+        rules_calibrated: { type: integer }
+        calibrations: { type: object, additionalProperties: { $ref: "#/components/schemas/RuleCalibration" } }
+        mean_accuracy: { type: number }
+
+    LeakagePoint:
+      type: object
+      description: Value lost between two rungs of the savings funnel.
+      additionalProperties: true
+
+    SavingsFunnel:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        period: { $ref: "#/components/schemas/Period" }
+        potential_monthly: { $ref: "#/components/schemas/Money" }
+        approved_monthly: { $ref: "#/components/schemas/Money" }
+        planned_monthly: { $ref: "#/components/schemas/Money" }
+        executed_monthly: { $ref: "#/components/schemas/Money" }
+        validated_monthly: { $ref: "#/components/schemas/Money" }
+        realized_monthly: { $ref: "#/components/schemas/Money" }
+        realized_annual: { $ref: "#/components/schemas/Money" }
+        counts: { type: object, additionalProperties: { type: integer } }
+        leakage: { type: array, items: { $ref: "#/components/schemas/LeakagePoint" } }
+        prediction_accuracy: { type: number, description: "realized / executed — published even when it's bad." }
+        computed_at: { type: string, format: date-time }
+
+    # -------------------------------------------------------------
+    # Audit
+    # -------------------------------------------------------------
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string }
+        sequence: { type: integer, format: int64 }
+        action: { type: string }
+        outcome: { type: string, enum: [success, failure] }
+        actor: { type: string }
+        machine: { type: boolean }
+        subject: { type: string }
+        subject_id: { type: string }
+        message: { type: string }
+        before: { type: object, additionalProperties: true }
+        after: { type: object, additionalProperties: true }
+        metadata: { type: object, additionalProperties: true }
+        at: { type: string, format: date-time }
+        hash: { type: string, description: "This entry's link in the tamper-evident hash chain." }
+
+    AuditEntryPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } }
+
+    # -------------------------------------------------------------
+    # AI Copilot
+    # -------------------------------------------------------------
+    AskCopilotRequest:
+      type: object
+      required: [question]
+      properties:
+        conversation_id: { type: string, description: "Omit to start a new conversation." }
+        question: { type: string, example: "Why did our RDS spend go up this month?" }
+        context_kind: { type: string, description: "Narrows the question to a resource, application or recommendation the user is looking at." }
+        context_id: { type: string }
+
+    Citation:
+      type: object
+      properties:
+        kind: { type: string, enum: [resource, cost_record, recommendation, document, metric] }
+        id: { type: string }
+        label: { type: string }
+        value: { type: string }
+        url: { type: string, format: uri }
+
+    ToolResult:
+      type: object
+      properties:
+        tool_call_id: { type: string }
+        name: { type: string }
+        result: {}
+        error: { type: string }
+        latency_ms: { type: integer }
+
+    RetrievedDocument:
+      type: object
+      properties:
+        document: { type: object, additionalProperties: true }
+        score: { type: number }
+        snippet: { type: string }
+
+    CopilotAnswer:
+      type: object
+      properties:
+        conversation_id: { type: string }
+        answer: { type: string }
+        citations: { type: array, items: { $ref: "#/components/schemas/Citation" } }
+        tool_calls: { type: array, items: { $ref: "#/components/schemas/ToolResult" } }
+        retrieved: { type: array, items: { $ref: "#/components/schemas/RetrievedDocument" } }
+        grounded: { type: boolean, description: "False means the answer could not be tied to tenant data and should be treated with suspicion." }
+        grounding_issues: { type: array, items: { type: string } }
+        degraded: { type: boolean }
+        follow_ups: { type: array, items: { type: string } }
+        data: { type: object, additionalProperties: true, description: "Structured payload the UI can render as a chart or table instead of prose." }
+        latency_ms: { type: integer }
+
+    Turn:
+      type: object
+      description: One message in a copilot or onboarding conversation.
+      additionalProperties: true
+
+    Conversation:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        kind: { type: string, enum: [onboarding, copilot] }
+        title: { type: string }
+        actor: { type: string }
+        turns: { type: array, items: { $ref: "#/components/schemas/Turn" } }
+
+    ConversationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageEnvelope"
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/Conversation" } }

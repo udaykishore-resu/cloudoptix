@@ -1,0 +1,33 @@
+# The regression suite tests/integration/cost_regression_test.go evaluates
+# every fixture plan against. It is deliberately the same shape as
+# .github/cost-regression-suite.yaml and examples/cost-compiler's suite: a
+# suite that only existed for the test would prove the evaluator works on a
+# suite nobody writes.
+name: fixture-guardrails
+version: 1
+enabled: true
+checks:
+  - name: no-new-nat-gateways
+    kind: forbidden_resource
+    resource_types:
+      - aws_nat_gateway
+    on_violation: FAIL
+    message: "A new NAT gateway needs an architecture review: its data-processing charge is unbounded and usually avoidable with a gateway VPC endpoint."
+
+  - name: monthly-increase-cap
+    kind: max_monthly_increase_pct
+    threshold: 10.0
+    on_violation: FAIL
+    message: "Monthly cost must not rise more than 10% without sign-off."
+
+  - name: new-resources-must-be-tagged
+    kind: require_tags
+    required_tags: [Application, Team, Environment]
+    on_violation: FAIL
+    message: "Every new billable resource must carry Application, Team and Environment tags."
+
+  - name: pricing-coverage-floor
+    kind: max_unpriced_ratio
+    threshold: 0.10
+    on_violation: WARNING
+    message: "More than 10% of this change could not be priced, so the delta below is incomplete."

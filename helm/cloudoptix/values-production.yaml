@@ -1,0 +1,73 @@
+# Partial overlay: `helm upgrade -f values.yaml -f values-production.yaml`.
+
+global:
+  environment: production
+  imageTag: "" # set explicitly at deploy time (a semver release tag from .github/workflows/release.yml) — never left to float to "latest" in production
+
+config:
+  environment: production
+  server:
+    tlsEnabled: false # ALB still terminates TLS; see ingress.tls — this flag is about the pod's own listener, not the public endpoint
+  llm:
+    provider: anthropic # config.Validate() refuses "scripted" once environment=production — this MUST be anthropic or bedrock
+    model: claude-sonnet-4-5
+  auth:
+    devStaticTokenEnabled: false # Validate() refuses this outright in production regardless, set explicitly anyway so the value is never ambiguous in a diff
+  telemetry:
+    logLevel: info
+    tracingEnabled: true
+    traceSampleRatio: 0.1
+  features:
+    autonomousExecution: false # a policy decision, not an infrastructure one — flip only alongside a reviewed internal/domain/govern policy rollout, never as part of an unrelated chart bump
+
+secrets:
+  externalSecrets:
+    enabled: true
+    secretStoreRef:
+      name: cloudoptix-production-secret-store
+      kind: ClusterSecretStore
+    database: { remoteRef: "cloudoptix-production/database-password" } # or the RDS-managed secret ARN from terraform/modules/rds's master_user_secret_arn output — see that module's README
+    redis: { remoteRef: "cloudoptix-production/redis-password" }
+    awsExternalId: { remoteRef: "cloudoptix-production/aws-assume-role-external-id" }
+    llmApiKey: { remoteRef: "cloudoptix-production/llm-api-key" }
+    authServiceToken: { remoteRef: "cloudoptix-production/auth-service-token-secret" }
+
+components:
+  api:
+    replicaCount: 4
+    autoscaling:
+      minReplicas: 4
+      maxReplicas: 20
+    pdb:
+      minAvailable: 3
+  workerDiscovery:
+    replicaCount: 3
+    autoscaling: { minReplicas: 2, maxReplicas: 30 }
+  workerOptimization:
+    replicaCount: 3
+    autoscaling: { minReplicas: 2, maxReplicas: 15 }
+  workerAutomation:
+    replicaCount: 2
+    autoscaling: { minReplicas: 2, maxReplicas: 10 }
+  workerValidation:
+    replicaCount: 2
+    autoscaling: { minReplicas: 2, maxReplicas: 8 }
+    pdb: { enabled: true, minAvailable: 1 }
+  workerNotification:
+    replicaCount: 2
+    autoscaling: { minReplicas: 2, maxReplicas: 6 }
+    pdb: { enabled: true, minAvailable: 1 }
+
+ingress:
+  enabled: true
+  tls:
+    enabled: true
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+
+prometheusRule:
+  enabled: true

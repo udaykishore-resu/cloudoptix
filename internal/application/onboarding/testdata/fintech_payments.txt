@@ -1,0 +1,10 @@
+# Scenario: a mid-size fintech onboarding a single production account,
+# giving most information up front. Exercises: organization/application
+# extraction, industry-driven inference, business transactions, objectives,
+# compliance frameworks, and a clean path to ReadyForReview.
+We are Meridian Payments, a fintech company. We're a mid-size company operating across North America and Europe.
+Our platform is called PayFlow. We operate a payments processing platform for online merchants, built as microservices, running on EKS and Lambda. We use PostgreSQL and DynamoDB.
+Please analyse AWS account 111111111111 in us-east-1, that's our production environment.
+We process about 40,000 payments per month and need to meet PCI-DSS and SOC2.
+We want to cut costs by 20% and our monthly budget is $60,000. Our availability target is 99.95% and max latency should stay under 250ms.
+We have a medium risk tolerance for optimization changes, spot instances are fine for non-critical workloads, and production changes always require human approval.

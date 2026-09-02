@@ -1,0 +1,177 @@
+{
+  "compilation_result": {
+    "id": "compile_8f2a1c90",
+    "tenant_id": "tenant_northfield",
+    "source": "terraform_plan",
+    "label": "PR #4127: add search-warmer autoscaling group",
+    "changes": [
+      {
+        "address": "module.search_warmer.aws_autoscaling_group.warmer",
+        "resource_type": "aws_autoscaling_group",
+        "kind": "compute_group",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$105.12",
+        "monthly_delta": "$105.12",
+        "usage_dependent": false,
+        "unpriced": false,
+        "price_components": [
+          {
+            "name": "instance_hours",
+            "unit": "instance-hour",
+            "quantity": 2190,
+            "unit_price": "$0.048",
+            "monthly": "$105.12",
+            "price_basis": "on_demand"
+          }
+        ],
+        "warnings": []
+      },
+      {
+        "address": "module.search_warmer.aws_lb.warmer",
+        "resource_type": "aws_lb",
+        "kind": "load_balancer",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$33.95",
+        "monthly_delta": "$33.95",
+        "usage_dependent": true,
+        "assumptions": [
+          {
+            "field": "lcu_hours",
+            "assumed_value": "3 LCU-hours average",
+            "basis": "median LCU consumption of the 6 comparable internal ALBs already discovered in this account's search namespace, over the trailing 30 days"
+          }
+        ],
+        "unpriced": false,
+        "price_components": [
+          {
+            "name": "load_balancer_hours",
+            "unit": "hour",
+            "quantity": 730,
+            "unit_price": "$0.0225",
+            "monthly": "$16.43",
+            "price_basis": "on_demand"
+          },
+          {
+            "name": "lcu_hours",
+            "unit": "lcu-hour",
+            "quantity": 2190,
+            "unit_price": "$0.008",
+            "monthly": "$17.52",
+            "price_basis": "on_demand"
+          }
+        ],
+        "warnings": [
+          "LCU consumption is usage-dependent and modelled from comparable existing ALBs, not measured directly — actual cost may differ once real traffic is observed."
+        ]
+      },
+      {
+        "address": "module.search_warmer.aws_lb_target_group.warmer",
+        "resource_type": "aws_lb_target_group",
+        "kind": "load_balancer_target_group",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$0.00",
+        "monthly_delta": "$0.00",
+        "usage_dependent": false,
+        "unpriced": false,
+        "price_components": [],
+        "warnings": ["Target groups carry no charge of their own; cost is entirely on the load balancer and registered targets."]
+      },
+      {
+        "address": "module.search_warmer.aws_launch_template.warmer",
+        "resource_type": "aws_launch_template",
+        "kind": "launch_template",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$0.00",
+        "monthly_delta": "$0.00",
+        "usage_dependent": false,
+        "unpriced": false,
+        "price_components": [],
+        "warnings": ["A launch template carries no charge itself; its cost is captured entirely through the autoscaling group's instance-hours above, to avoid double-counting."]
+      }
+    ],
+    "baseline_monthly": "$0.00",
+    "projected_monthly": "$139.07",
+    "monthly_delta": "$139.07",
+    "annual_delta": "$1,668.84",
+    "delta_pct": null,
+    "created_count": 4,
+    "updated_count": 0,
+    "deleted_count": 0,
+    "unpriced_count": 0,
+    "coverage": 1.0,
+    "confidence": 0.96,
+    "assumptions": [
+      {
+        "field": "lcu_hours",
+        "assumed_value": "3 LCU-hours average",
+        "basis": "median LCU consumption of 6 comparable internal ALBs in the search namespace, trailing 30 days"
+      }
+    ],
+    "risks": [],
+    "opportunities": [
+      {
+        "address": "module.search_warmer.aws_autoscaling_group.warmer",
+        "summary": "The three m5.large instances are stateless request-handling capacity behind an internal ALB — a reasonable Spot candidate given optimization.spotAllowed is true for this tenant and this workload class already runs on Spot elsewhere in the account.",
+        "monthly_saving": "$68.06",
+        "change": "Add a mixed-instances policy with a Spot-backed capacity pool; on-demand base of 1 instance, Spot for the remaining 2."
+      }
+    ],
+    "pricing_date": "2026-08-01T00:00:00Z",
+    "compiled_at": "2026-08-29T14:02:11Z",
+    "duration_ms": 184
+  },
+  "regression_report": {
+    "id": "regrep_3a91ff02",
+    "tenant_id": "tenant_northfield",
+    "compilation_id": "compile_8f2a1c90",
+    "suite_name": "platform-cost-guardrails",
+    "verdict": "PASS",
+    "results": [
+      {
+        "name": "nat-gateway-requires-review",
+        "kind": "forbidden_resource",
+        "verdict": "PASS",
+        "expected": "no aws_nat_gateway resources in the change set",
+        "actual": "0 aws_nat_gateway resources",
+        "message": "No forbidden resource types present."
+      },
+      {
+        "name": "workload-monthly-increase-cap",
+        "kind": "max_monthly_increase_pct",
+        "verdict": "PASS",
+        "expected": "<= 10.0% increase against the catalog-search workload's current baseline ($14,200.00/mo)",
+        "actual": "0.98% ($139.07/mo against $14,200.00/mo baseline)",
+        "message": "Well within threshold."
+      },
+      {
+        "name": "new-resources-must-be-tagged",
+        "kind": "require_tags",
+        "verdict": "PASS",
+        "expected": "Application, Team, Environment present on every new resource",
+        "actual": "all 4 new resources fully tagged",
+        "message": "No untagged resources."
+      },
+      {
+        "name": "pricing-coverage-floor",
+        "kind": "max_unpriced_ratio",
+        "verdict": "PASS",
+        "expected": "<= 10% of monthly delta unpriced",
+        "actual": "0% unpriced (0/4 resources)",
+        "message": "Full pricing coverage."
+      }
+    ],
+    "monthly_delta": "$139.07",
+    "annual_delta": "$1,668.84",
+    "summary": "All 4 cost checks passed. Monthly impact $139.07 ($1,668.84/year).",
+    "required_action": "",
+    "evaluated_at": "2026-08-29T14:02:11Z"
+  }
+}

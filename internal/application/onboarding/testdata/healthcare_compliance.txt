@@ -1,0 +1,12 @@
+# Scenario: a regulated healthcare company. Exercises: industry-driven
+# inference (high criticality, tighter availability default), HIPAA
+# compliance capture, and reaching ReadyForReview through a mix of stated
+# and inferred fields.
+We're a healthcare company called Vitalis Health.
+Our platform is called CarePortal, a clinical scheduling application for hospitals.
+Analyse AWS account 333333333333 in eu-west-1, this is our production environment. We need to comply with HIPAA.
+I don't know
+I don't know
+I don't know
+I don't know
+Our risk tolerance is low, we're quite conservative.

@@ -1,0 +1,37 @@
+# Build output
+/bin/
+/dist/
+*.exe
+cloudoptix-api
+cloudoptix-worker
+coptx
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/*.tsbuildinfo
+
+# Local configuration and secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+terraform.tfvars
+!terraform/**/terraform.tfvars
+.terraform/
+*.tfstate
+*.tfstate.*
+backend.hcl
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

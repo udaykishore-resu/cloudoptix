@@ -1,0 +1,422 @@
+# Worked example: multi-account enterprise
+#
+# The largest of the four examples — an AWS Organizations estate with
+# nine member accounts across three business units, showing spec.AWS at
+# the scale it's actually built for (payerAccountId + organizationId +
+# a long accounts[] list with mixed environment/production values) and a
+# teams[] section with multiple teams whose `owns` lists partition the
+# workload inventory. Validates against ../cloudoptix.schema.json.
+
+apiVersion: cloudoptix.io/v1
+kind: CloudOptixSpec
+
+organization:
+  name: Palisade Industrial Holdings
+  industry: industrial-manufacturing
+  size: "38000 employees"
+  businessRegions:
+    - us
+    - eu
+    - apac
+  primaryContact: cloud-coe@palisadeholdings.example
+
+application:
+  name: palisade-digital-platform
+  description: >-
+    The shared digital platform underlying three business units:
+    supply-chain visibility (Atlas), field-service dispatch (Compass),
+    and the industrial IoT telemetry ingestion pipeline (Beacon). Each
+    business unit runs its own AWS accounts under one AWS Organization,
+    with a shared platform team owning networking, identity, and the
+    CloudOptix integration itself.
+  domain: industrial-platform
+  criticality: high
+  architecture:
+    style: microservices
+    computePlatforms:
+      - eks
+      - ec2
+      - lambda
+    databases:
+      - aurora-postgresql
+      - dynamodb
+      - redshift
+    caches:
+      - elasticache-redis
+    messaging:
+      - kinesis
+      - sqs
+      - sns
+      - msk
+    storage:
+      - s3
+      - efs
+    networking:
+      - transit-gateway
+      - alb
+      - nat-gateway
+      - direct-connect
+    observability:
+      - cloudwatch
+      - datadog
+    deploymentModel: hub-and-spoke-multi-account
+    iac:
+      - terraform
+
+aws:
+  accessMode: assume_role
+  payerAccountId: "700000000001"
+  organizationId: o-palisade01
+  cur:
+    bucket: palisade-org-cur
+    prefix: cloudoptix/org
+    region: us-east-1
+    reportName: palisade-consolidated-cur
+  accounts:
+    - id: "700000000010"
+      alias: palisade-shared-network
+      environment: production
+      regions: [us-east-1, eu-west-1, ap-southeast-1]
+      roleArn: arn:aws:iam::700000000010:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-pal-net01
+      production: true
+    - id: "700000000020"
+      alias: atlas-prod-us
+      environment: production
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::700000000020:role/cloudoptix-execute
+      externalId: cloudoptix-ext-pal-atl01
+      production: true
+    - id: "700000000021"
+      alias: atlas-prod-eu
+      environment: production
+      regions: [eu-west-1]
+      roleArn: arn:aws:iam::700000000021:role/cloudoptix-execute
+      externalId: cloudoptix-ext-pal-atl02
+      production: true
+    - id: "700000000022"
+      alias: atlas-staging
+      environment: staging
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::700000000022:role/cloudoptix-execute
+      externalId: cloudoptix-ext-pal-atl03
+      production: false
+    - id: "700000000030"
+      alias: compass-prod
+      environment: production
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::700000000030:role/cloudoptix-execute
+      externalId: cloudoptix-ext-pal-cmp01
+      production: true
+    - id: "700000000031"
+      alias: compass-staging
+      environment: staging
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::700000000031:role/cloudoptix-plan
+      externalId: cloudoptix-ext-pal-cmp02
+      production: false
+    - id: "700000000040"
+      alias: beacon-prod-apac
+      environment: production
+      regions: [ap-southeast-1, ap-northeast-1]
+      roleArn: arn:aws:iam::700000000040:role/cloudoptix-execute
+      externalId: cloudoptix-ext-pal-bcn01
+      production: true
+    - id: "700000000041"
+      alias: beacon-dr
+      environment: dr
+      regions: [ap-southeast-2]
+      roleArn: arn:aws:iam::700000000041:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-pal-bcn02
+      production: true
+    - id: "700000000090"
+      alias: palisade-sandbox
+      environment: sandbox
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::700000000090:role/cloudoptix-plan
+      externalId: cloudoptix-ext-pal-sbx01
+      production: false
+
+workloads:
+  - name: atlas-tracking-api
+    type: service
+    platform: eks
+    environment: production
+    criticality: critical
+    owner: atlas-team@palisadeholdings.example
+    team: atlas
+    cluster: atlas-prod-us-east-1
+    namespace: tracking
+    dependsOn: [atlas-db]
+    slo:
+      availability: 0.999
+      latencyP95Ms: 350
+  - name: atlas-db
+    type: database
+    platform: aurora-postgresql
+    environment: production
+    criticality: critical
+    owner: atlas-team@palisadeholdings.example
+    team: atlas
+  - name: compass-dispatch
+    type: service
+    platform: ec2
+    environment: production
+    criticality: high
+    owner: compass-team@palisadeholdings.example
+    team: compass
+    dependsOn: [compass-db]
+    slo:
+      availability: 0.998
+      latencyP95Ms: 500
+  - name: compass-db
+    type: database
+    platform: aurora-postgresql
+    environment: production
+    criticality: high
+    owner: compass-team@palisadeholdings.example
+    team: compass
+  - name: beacon-telemetry-ingest
+    type: worker
+    platform: lambda
+    environment: production
+    criticality: critical
+    owner: beacon-team@palisadeholdings.example
+    team: beacon
+    dependsOn: [beacon-stream]
+    slo:
+      availability: 0.9995
+      errorRateMax: 0.001
+  - name: beacon-stream
+    type: messaging
+    platform: msk
+    environment: production
+    criticality: critical
+    owner: beacon-team@palisadeholdings.example
+    team: beacon
+  - name: beacon-analytics
+    type: batch
+    platform: redshift
+    environment: production
+    criticality: medium
+    owner: beacon-team@palisadeholdings.example
+    team: beacon
+    dependsOn: [beacon-stream]
+  - name: shared-networking
+    type: infrastructure
+    platform: transit-gateway
+    environment: production
+    criticality: critical
+    owner: platform-coe@palisadeholdings.example
+    team: platform-coe
+
+business:
+  transactions:
+    - name: atlas-shipment-update
+      description: One shipment location/status update processed by Atlas.
+      monthlyVolume: 180000000
+      workloads: [atlas-tracking-api, atlas-db]
+      targetCostPerUnit: 0.00021
+      volumeMetric: shipment_updates
+      critical: true
+    - name: compass-dispatch-assignment
+      description: One field-service job assigned to a technician by Compass.
+      monthlyVolume: 3100000
+      workloads: [compass-dispatch, compass-db]
+      targetCostPerUnit: 0.038
+      volumeMetric: dispatch_assignments
+      critical: true
+    - name: beacon-telemetry-event
+      description: One IoT sensor reading ingested and durably stored.
+      monthlyVolume: 41000000000
+      workloads: [beacon-telemetry-ingest, beacon-stream]
+      targetCostPerUnit: 0.0000034
+      volumeMetric: telemetry_events
+      critical: true
+  kpis:
+    - name: atlas-tracking-accuracy
+      unit: percent
+      target: 99.4
+    - name: compass-on-time-dispatch-rate
+      unit: percent
+      target: 92.0
+  customerCount: 640
+  peakSeasons:
+    - fiscal-year-end-inventory-push
+  trafficProfile: "Atlas and Compass are diurnal per-region; Beacon telemetry volume is near-constant, governed by connected-device count rather than time of day"
+
+objectives:
+  costReductionTarget: 0.12
+  monthlyBudget: 1850000
+  availabilityTarget: 0.999
+  timeframe: "rolling annual, reviewed at each quarterly business review"
+  costSlos:
+    - name: atlas-cost-per-update
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.00021
+      transaction: atlas-shipment-update
+      window: rolling_30d
+      errorBudgetPct: 0.10
+      breachActions: [notify, generate_recommendations]
+    - name: beacon-cost-per-event
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.0000034
+      transaction: beacon-telemetry-event
+      window: rolling_30d
+      errorBudgetPct: 0.12
+      breachActions: [notify, generate_recommendations]
+    - name: compass-cost-per-dispatch
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.038
+      transaction: compass-dispatch-assignment
+      window: rolling_30d
+      errorBudgetPct: 0.15
+      breachActions: [notify]
+    - name: org-absolute-spend
+      kind: absolute_spend
+      scope: organization
+      target: 1850000
+      window: calendar_month
+      errorBudgetPct: 0.05
+      breachActions: [notify, require_approval]
+
+optimization:
+  riskTolerance: medium
+  preferences:
+    - prefer_savings_plans_over_reserved
+    - prefer_graviton_where_compatible
+  excludedActions:
+    - delete_snapshot
+  excludedResources:
+    - atlas-db-primary
+    - compass-db-primary
+    - beacon-stream-broker-1
+  excludedTags:
+    palisade.io/exclude-optimization: "true"
+  spotAllowed: true
+  commitmentAppetite: moderate
+  minSavingThreshold: 50
+
+automation:
+  enabled: true
+  environments: [staging, sandbox]
+  autoExecuteActions:
+    - stop_instance
+    - delete_unattached_volume
+    - release_unattached_eip
+    - resize_gp2_to_gp3
+  maintenanceWindows:
+    - name: atlas-staging-nightly
+      days: [mon, tue, wed, thu]
+      startUtc: "07:00"
+      durationMinutes: 120
+      environments: [staging]
+    - name: org-sandbox-weekend
+      days: [sat]
+      startUtc: "01:00"
+      durationMinutes: 300
+      environments: [sandbox]
+  maxConcurrentChanges: 8
+  maxMonthlyImpact: 40000
+  validationWindowMinutes: 90
+  autoRollback: true
+
+governance:
+  productionChangesRequireApproval: true
+  minApprovals: 2
+  approverRoles: [tenant_admin, architect]
+  segregationOfDuties: true
+  changeManagementSystem: jira-service-management
+  changeFreezeWindows:
+    - fiscal-year-end-inventory-push
+  policyPack: balanced
+
+security:
+  awsAccessMode: assume_role
+  complianceFrameworks: [soc2, iso27001]
+  dataResidency: [us, eu, apac]
+  encryptionRequired: true
+  ssoProvider: azure-ad
+  auditRetentionDays: 1825
+  piiHandling: pseudonymized
+
+observability:
+  metricsSources: [cloudwatch, datadog]
+  prometheusEndpoint: https://prometheus.internal.palisadeholdings.example
+  otelEndpoint: https://otel.internal.palisadeholdings.example:4317
+  tracingEnabled: true
+  logRetentionDays: 90
+
+notifications:
+  channels:
+    - name: platform-coe-slack
+      type: slack
+      target: "#cloudoptix-platform"
+      secretRef: notify/slack/platform-coe-webhook
+      severities: [medium, high, critical]
+    - name: atlas-team-slack
+      type: slack
+      target: "#atlas-alerts"
+      secretRef: notify/slack/atlas-webhook
+      severities: [high, critical]
+    - name: compass-team-slack
+      type: slack
+      target: "#compass-alerts"
+      secretRef: notify/slack/compass-webhook
+      severities: [high, critical]
+    - name: beacon-team-slack
+      type: slack
+      target: "#beacon-alerts"
+      secretRef: notify/slack/beacon-webhook
+      severities: [high, critical]
+    - name: coe-email
+      type: email
+      target: cloud-coe@palisadeholdings.example
+      severities: [critical]
+  subscriptions:
+    cost_slo_breach: [platform-coe-slack, coe-email]
+    execution_rollback: [platform-coe-slack, coe-email]
+    anomaly_detected: [platform-coe-slack]
+  quietHoursUtc: "08:00-14:00"
+
+teams:
+  - name: atlas
+    contact: atlas-team@palisadeholdings.example
+    owns: [atlas-tracking-api, atlas-db]
+    members:
+      - email: nadia.osei@palisadeholdings.example
+        name: Nadia Osei
+        roles: [tenant_admin, architect]
+      - email: victor.lindberg@palisadeholdings.example
+        name: Victor Lindberg
+        roles: [developer]
+  - name: compass
+    contact: compass-team@palisadeholdings.example
+    owns: [compass-dispatch, compass-db]
+    members:
+      - email: helena.duarte@palisadeholdings.example
+        name: Helena Duarte
+        roles: [architect, developer]
+  - name: beacon
+    contact: beacon-team@palisadeholdings.example
+    owns: [beacon-telemetry-ingest, beacon-stream, beacon-analytics]
+    members:
+      - email: kenji.watanabe@palisadeholdings.example
+        name: Kenji Watanabe
+        roles: [architect, developer]
+      - email: priyanka.subramaniam@palisadeholdings.example
+        name: Priyanka Subramaniam
+        roles: [sre]
+  - name: platform-coe
+    contact: cloud-coe@palisadeholdings.example
+    owns: [shared-networking]
+    members:
+      - email: derek.fontaine@palisadeholdings.example
+        name: Derek Fontaine
+        roles: [platform_admin, tenant_admin]
+      - email: mai.pham@palisadeholdings.example
+        name: Mai Pham
+        roles: [finops_analyst, auditor]

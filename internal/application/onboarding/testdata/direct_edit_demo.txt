@@ -1,0 +1,10 @@
+# Scenario: exercises "show me what you know" mid-conversation and a
+# direct-edit command ("Change production SLO to 99.99%") revising a value
+# stated earlier in the same conversation.
+We are Northstar Logistics, a logistics company.
+Our application is called FleetTrack.
+show me what you know
+Track AWS account 444444444444 in us-east-1, production.
+We have a medium risk tolerance.
+Our availability target is 99.9%.
+Change production SLO to 99.99%

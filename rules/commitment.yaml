@@ -1,0 +1,52 @@
+version: 1
+pack: commitment
+# Purchase-model rules: Spot, Reserved/Savings-Plan coverage, and DynamoDB
+# billing mode. Money thresholds are monthly USD.
+rules:
+  - id: ec2-spot-candidacy
+    name: "EC2 Spot candidacy"
+    category: commitment
+    action: enable_spot_capacity
+    description: >
+      An instance whose declared workload type tolerates interruption
+      (stateless microservice, worker, batch — never a datastore, and never
+      a tier-0 workload regardless of type) and whose purchase model is
+      still on-demand is a Spot candidate at the catalog's recent average
+      spot discount.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 10
+
+  - id: ec2-commitment-coverage-gap
+    name: "Savings Plan / Reserved Instance coverage gap"
+    category: commitment
+    action: purchase_commitment
+    description: >
+      Computed from steady-state baseline usage (the minimum on-demand spend
+      sustained across the full lookback window, not the peak): the portion
+      of that steady-state baseline running on-demand with no commitment
+      coverage is priced at the 1-year no-upfront Savings Plan rate to
+      quantify the gap.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      min_steady_state_days: 21
+      coverage_max: 0.6
+      min_monthly_saving: 20
+
+  - id: dynamodb-billing-mode-mismatch
+    name: "DynamoDB provisioned-vs-on-demand billing-mode mismatch"
+    category: commitment
+    action: switch_dynamodb_billing_mode
+    description: >
+      Computed from the actual consumed-vs-provisioned capacity ratio: a
+      table provisioned far above its consumption should switch to
+      on-demand; a table on on-demand whose implied steady, predictable
+      throughput would cost less under provisioned capacity should switch
+      the other way.
+    kinds: [aws.dynamodb.table]
+    enabled: true
+    thresholds:
+      provisioned_consumed_ratio_max: 0.3
+      min_monthly_saving: 5

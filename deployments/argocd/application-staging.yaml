@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudoptix-staging
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/udaykishore-resu/cloudoptix.git
+    targetRevision: main
+    path: helm/cloudoptix
+    helm:
+      # helm/cloudoptix ships a values-staging.yaml overlay alongside
+      # -dev and -production (see that chart's README for why staging
+      # ended up with its own file rather than reusing production's —
+      # the short version: deployments/argocd/applicationset.yaml needed
+      # a uniform values.yaml + values-<env>.yaml convention across every
+      # environment it manages, and this hand-authored Application uses
+      # the same file for consistency rather than drifting from it).
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudoptix-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

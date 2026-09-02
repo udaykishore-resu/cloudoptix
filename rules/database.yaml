@@ -1,0 +1,128 @@
+version: 1
+pack: database
+# RDS, Aurora and DynamoDB rules. Percentile thresholds are P95/P99 ceilings.
+# Money thresholds are monthly USD.
+rules:
+  - id: rds-oversized-instance
+    name: "RDS instance class oversized for observed load"
+    category: rightsizing
+    action: resize_rds_instance
+    description: >
+      An RDS instance whose P95/P99 CPU and memory show sustained headroom
+      over the observation window is a candidate to step down one class.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      cpu_p95_max: 40
+      cpu_p99_max: 55
+      mem_p95_max: 55
+      min_coverage: 0.5
+      min_window_hours: 168
+      min_monthly_saving: 20
+
+  - id: rds-idle-database
+    name: "Idle database — no connections"
+    category: waste
+    action: stop_rds_instance
+    description: >
+      A database with near-zero P99 connection count over a full observation
+      window, with adequate coverage, is not serving traffic.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      max_connections_p99: 1
+      min_window_hours: 168
+      min_coverage: 0.5
+      min_monthly_saving: 15
+
+  - id: rds-overprovisioned-storage
+    name: "RDS storage over-provisioned"
+    category: rightsizing
+    action: advisory_only
+    description: >
+      Allocated storage far exceeds observed disk usage. RDS storage can only
+      be grown, never shrunk in place, and the modify_rds_storage executor
+      refuses a decrease outright, so this is stated as advice a human acts on
+      through a snapshot-and-restore or blue/green migration rather than as an
+      executable change that would fail at the mutate step every time. It is
+      still surfaced because the gap compounds every month it is not acted on.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      used_fraction_max: 0.4
+      min_coverage: 0.4
+      min_monthly_saving: 10
+
+  - id: rds-unnecessary-read-replica
+    name: "Read replica with no read traffic"
+    category: waste
+    action: remove_rds_replica
+    description: >
+      A read replica whose observed read-oriented load (connections,
+      throughput) is near zero over a full window is paying full instance
+      price for no offloaded traffic.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      max_connections_p99: 1
+      min_window_hours: 168
+      min_coverage: 0.5
+      min_monthly_saving: 20
+
+  - id: rds-multiaz-nonprod
+    name: "Multi-AZ enabled on a non-production database"
+    category: waste
+    action: advisory_only
+    description: >
+      Multi-AZ doubles the instance charge for standby failover capacity.
+      Non-production databases rarely need that availability guarantee;
+      disabling it is a config change with no executor in this catalogue, so
+      the recommendation is advisory.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 10
+
+  - id: rds-gp2-to-gp3
+    name: "RDS gp2 storage — migrate to gp3"
+    category: storage
+    action: modify_rds_storage
+    description: >
+      Mirrors the EBS gp2->gp3 saving for RDS-attached storage, using the
+      catalog's rds_gp2/rds_gp3 bridged pricing.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 2
+
+  - id: rds-excessive-backup-retention
+    name: "Excessive automated backup retention"
+    category: data_lifecycle
+    action: advisory_only
+    description: >
+      Automated backup retention set well beyond the platform's recommended
+      ceiling accumulates backup storage charges with diminishing recovery
+      value; no direct executor exists for this setting, so it is advisory.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      max_recommended_days: 14
+
+  - id: rds-aurora-candidacy
+    name: "Aurora-vs-RDS candidacy"
+    category: architecture
+    action: advisory_only
+    description: >
+      A standard RDS engine carrying multiple read replicas is a candidate
+      for Aurora, whose storage-layer replication removes the need to pay
+      full instance price per replica; migration is architectural, so this
+      is advisory only.
+    kinds: [aws.rds.instance]
+    enabled: true
+    thresholds:
+      min_read_replica_count: 2
+      min_monthly_saving: 50
+# DynamoDB billing-mode mismatch lives in commitment.yaml: it is a
+# purchase-model decision (provisioned capacity vs on-demand), not a
+# rightsizing or waste finding, so it belongs with Spot and Savings Plan
+# coverage rather than here.

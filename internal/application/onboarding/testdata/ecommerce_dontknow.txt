@@ -1,0 +1,12 @@
+# Scenario: an online retailer that answers the required questions but
+# says "I don't know" to several optional ones. Exercises: UNKNOWN
+# provenance, batched question progression across stages, and reaching
+# ReadyForReview without every field answered.
+We are Bright Cart, an online retailer.
+Our application is called Cart Service.
+I don't know
+Please look at AWS account 222222222222 in us-west-2, that's production.
+I don't know
+not sure
+I don't know
+We have a high risk tolerance for changes, and no approval needed for automation.

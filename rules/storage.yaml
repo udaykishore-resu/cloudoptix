@@ -1,0 +1,163 @@
+version: 1
+pack: storage
+# EBS, AMI and S3 rules. Age guards exist wherever a rule proposes deleting
+# something, so a volume detached ten minutes ago is never proposed for
+# deletion. Money thresholds are monthly USD.
+rules:
+  - id: ebs-unattached-volume
+    name: "Unattached EBS volume"
+    category: waste
+    action: delete_volume
+    description: >
+      An EBS volume in the available (not in-use) state, detached for at
+      least the age guard, is billing for storage nobody is reading. The age
+      guard exists so a volume mid-migration is never proposed for deletion.
+    kinds: [aws.ebs.volume]
+    enabled: true
+    thresholds:
+      min_unattached_days: 7
+      min_monthly_saving: 1
+
+  - id: ebs-overprovisioned
+    name: "Over-provisioned EBS volume (size and/or IOPS)"
+    category: rightsizing
+    action: resize_volume
+    description: >
+      An attached volume whose observed disk usage is far below its
+      allocated size, or whose observed IOPS is far below its provisioned
+      IOPS, is paying for capacity nobody is consuming.
+    kinds: [aws.ebs.volume]
+    enabled: true
+    thresholds:
+      used_fraction_max: 0.4
+      iops_used_fraction_max: 0.5
+      min_coverage: 0.4
+      min_monthly_saving: 5
+
+  - id: ebs-gp2-to-gp3
+    name: "gp2 volume — migrate to gp3"
+    category: storage
+    action: modify_volume_type
+    description: >
+      gp3 is priced independently of size for its baseline 3,000 IOPS / 125
+      MiB/s, undercutting gp2 on every volume above roughly 34 GiB with no
+      performance loss. The baseline IOPS/throughput mapping AWS guarantees
+      on migration (3,000 IOPS, 125 MiB/s, or gp2's higher burst-earned IOPS
+      if that is larger) is preserved so the recommendation never proposes a
+      performance regression.
+    kinds: [aws.ebs.volume]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 1
+
+  - id: ebs-snapshot-retention
+    name: "Snapshot older than retention policy with no dependent AMI"
+    category: data_lifecycle
+    action: delete_snapshot
+    description: >
+      A manual EBS snapshot older than the tenant's retention policy (or the
+      platform default) that is not the source of any registered AMI is safe
+      to delete; one that backs an AMI is excluded regardless of age.
+    kinds: [aws.ebs.snapshot]
+    enabled: true
+    thresholds:
+      retention_days: 90
+      min_monthly_saving: 0.5
+
+  - id: ebs-orphaned-snapshot
+    name: "Orphaned snapshot — source volume no longer exists"
+    category: waste
+    action: delete_snapshot
+    description: >
+      A snapshot whose source volume ID no longer resolves to a volume in
+      the inventory has outlived any restore workflow tied to that volume's
+      lifecycle.
+    kinds: [aws.ebs.snapshot]
+    enabled: true
+    thresholds:
+      min_age_days: 1
+      min_monthly_saving: 0.25
+
+  - id: ebs-unused-ami
+    name: "Unused AMI"
+    category: waste
+    action: deregister_ami
+    description: >
+      An AMI not referenced by any running instance's launch configuration
+      and older than the age guard is a deregistration candidate; its backing
+      snapshots are then orphaned and picked up by ebs-orphaned-snapshot.
+    kinds: [aws.ec2.image]
+    enabled: true
+    thresholds:
+      min_age_days: 90
+      min_monthly_saving: 0.5
+
+  - id: s3-no-lifecycle-policy
+    name: "S3 bucket with a cold-data profile and no lifecycle policy"
+    category: data_lifecycle
+    action: apply_s3_lifecycle
+    description: >
+      A bucket with no lifecycle policy whose object-count and size profile
+      indicates cold data (large, rarely-touched objects) is paying Standard
+      rates indefinitely for data that qualifies for a cheaper class.
+    kinds: [aws.s3.bucket]
+    enabled: true
+    thresholds:
+      min_size_gib: 50
+      min_monthly_saving: 5
+
+  - id: s3-wrong-storage-class
+    name: "S3 objects in the wrong storage class for their access pattern"
+    category: storage
+    action: apply_s3_lifecycle
+    description: >
+      A bucket's estimated access pattern (from request-rate telemetry
+      relative to its size) does not match its storage class — cold data
+      sitting in Standard, or churny data sitting in an archive class paying
+      early-deletion penalties.
+    kinds: [aws.s3.bucket]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 2
+
+  - id: s3-noncurrent-versions
+    name: "Non-current object versions accumulating with no expiry"
+    category: data_lifecycle
+    action: apply_s3_lifecycle
+    description: >
+      A versioned bucket with a material volume of non-current versions and
+      no lifecycle policy to expire them is paying Standard rates for every
+      version of every object ever overwritten or deleted.
+    kinds: [aws.s3.bucket]
+    enabled: true
+    thresholds:
+      min_noncurrent_gib: 10
+      min_monthly_saving: 1
+
+  - id: s3-incomplete-multipart-uploads
+    name: "Incomplete multipart uploads"
+    category: waste
+    action: abort_multipart_uploads
+    description: >
+      Abandoned multipart upload parts bill for storage with no object ever
+      becoming visible. Aborting them is a zero-risk, zero-downtime cleanup.
+    kinds: [aws.s3.bucket]
+    enabled: true
+    thresholds:
+      min_gib: 1
+      min_monthly_saving: 0.25
+
+  - id: s3-intelligent-tiering-candidacy
+    name: "S3 Intelligent-Tiering candidacy (with monitoring-charge break-even)"
+    category: storage
+    action: apply_s3_lifecycle
+    description: >
+      Intelligent-Tiering saves money only once its monitoring charge
+      (billed per object, per month) is smaller than the storage-class saving
+      it would earn; a bucket of many small objects loses money on it. The
+      rule computes the exact break-even average object size and never
+      recommends the feature below it.
+    kinds: [aws.s3.bucket]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 3

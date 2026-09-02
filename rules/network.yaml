@@ -1,0 +1,89 @@
+version: 1
+pack: network
+# Networking rules. Money thresholds are monthly USD.
+rules:
+  - id: nat-gateway-vpc-endpoint-opportunity
+    name: "NAT data-processing dominated by S3/DynamoDB traffic"
+    category: network
+    action: create_vpc_endpoint
+    description: >
+      When a NAT gateway's processed-bytes charge is dominated by traffic to
+      S3 or DynamoDB, a free VPC gateway endpoint eliminates that NAT
+      data-processing charge entirely (gateway endpoints for S3 and DynamoDB
+      carry no hourly or per-GB charge). The rule computes the exact saving
+      as the estimated S3/DynamoDB share of processed bytes times the NAT
+      per-GB rate.
+    kinds: [aws.ec2.nat_gateway]
+    enabled: true
+    thresholds:
+      min_s3_dynamo_fraction: 0.25
+      min_monthly_saving: 5
+
+  - id: nat-gateway-redundant
+    name: "Redundant per-AZ NAT gateway"
+    category: network
+    action: remove_nat_gateway
+    description: >
+      A per-AZ NAT gateway whose processed volume is low enough that a
+      single shared NAT (accepting the cross-AZ data-transfer charge as the
+      trade-off) would cost less is a consolidation candidate.
+    kinds: [aws.ec2.nat_gateway]
+    enabled: true
+    thresholds:
+      max_gb_processed_month: 200
+      min_monthly_saving: 15
+
+  - id: cross-az-chatter
+    name: "Cross-AZ chatter between components that could be co-located"
+    category: network
+    action: advisory_only
+    description: >
+      Two workload-owned resources exchanging enough cross-AZ traffic that
+      the transfer charge alone rivals a rightsizing recommendation are
+      candidates for zone-aware placement or co-location; no executor moves
+      a running fleet's AZ, so this is advisory.
+    kinds: [aws.ec2.instance, aws.rds.instance, aws.elasticache.cluster]
+    enabled: true
+    thresholds:
+      min_cross_az_gb_month: 500
+      min_monthly_saving: 20
+
+  - id: elastic-ip-unattached
+    name: "Unattached Elastic IP"
+    category: waste
+    action: release_elastic_ip
+    description: >
+      An Elastic IP not attached to a running instance or NAT gateway bills
+      an idle-hour charge with no offsetting use.
+    kinds: [aws.ec2.elastic_ip]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 1
+
+  - id: load-balancer-idle
+    name: "Idle load balancer"
+    category: waste
+    action: advisory_only
+    description: >
+      A load balancer whose LCU consumption is near the fixed hourly floor
+      for a sustained period is serving negligible traffic; removing it
+      requires confirming nothing still resolves to it, so this is advisory.
+    kinds: [aws.elbv2.application, aws.elbv2.network]
+    enabled: true
+    thresholds:
+      max_lcu_hour_avg: 0.05
+      min_monthly_saving: 5
+
+  - id: cloudfront-vs-direct-egress
+    name: "CloudFront-vs-direct-egress break-even"
+    category: architecture
+    action: advisory_only
+    description: >
+      Compares the blended cost of serving a workload's internet egress
+      through CloudFront (its data-out rate, typically cheaper than direct
+      EC2/S3 internet egress at volume, plus request charges) against direct
+      egress, and advises whichever is cheaper at the observed volume.
+    kinds: [aws.s3.bucket, aws.cloudfront.distribution]
+    enabled: true
+    thresholds:
+      min_gb_out_month: 500

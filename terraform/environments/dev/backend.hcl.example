@@ -1,0 +1,12 @@
+# Copy to backend.hcl (git-ignored) and fill in with the outputs of
+# terraform/bootstrap, then run:
+#   terraform init -backend-config=backend.hcl
+#
+# backend.hcl is deliberately not committed — even though none of these
+# three values is a secret, the bucket name conventionally embeds an
+# account ID or org name, and this repo's hard rule is no hardcoded account
+# identifiers in a committed file.
+
+bucket         = "REPLACE_WITH_BOOTSTRAP_BUCKET_NAME"
+region         = "REPLACE_WITH_REGION"
+dynamodb_table = "REPLACE_WITH_BOOTSTRAP_LOCK_TABLE_NAME"

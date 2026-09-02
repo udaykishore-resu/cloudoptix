@@ -1,0 +1,51 @@
+version: 1
+pack: observability
+# CloudWatch, KMS and Secrets Manager rules. Money thresholds are monthly USD.
+rules:
+  - id: cloudwatch-log-retention-unbounded
+    name: "CloudWatch log group with infinite retention"
+    category: data_lifecycle
+    action: set_log_retention
+    description: >
+      A log group with no retention policy (Never Expire) accumulates
+      storage charges forever. The rule proposes the platform default or the
+      tenant's declared observability.log_retention_days, whichever is set.
+    kinds: [aws.logs.log_group]
+    enabled: true
+    thresholds:
+      recommended_retention_days: 90
+      min_monthly_saving: 0.5
+
+  - id: cloudwatch-high-cardinality-metrics
+    name: "High-cardinality custom metrics"
+    category: observability_cost
+    action: advisory_only
+    description: >
+      Custom metrics are billed per metric-per-dimension-combination, which
+      scales combinatorially with cardinality (e.g. a per-request or
+      per-container-instance dimension). CloudOptix has no discovered
+      "metric" resource kind of its own, so this rule reads the emitting
+      compute resource's declared custom-metric count (an attribute the
+      metrics collector attaches) and advises on the ones whose combinatorial
+      count crosses the threshold. No executor removes an application's own
+      metric emission, so this is advisory with the estimated monthly charge.
+    kinds: [aws.ec2.instance, aws.ecs.service, aws.lambda.function, aws.eks.nodegroup]
+    enabled: true
+    thresholds:
+      min_metric_count: 500
+      min_monthly_saving: 5
+
+  - id: kms-secrets-unused
+    name: "Unused KMS keys and Secrets Manager secrets"
+    category: waste
+    action: advisory_only
+    description: >
+      A customer-managed KMS key with no recorded key-usage in the
+      observation window, or a secret with no recorded access, is paying its
+      flat monthly charge for nothing. Deleting either is destructive (a key
+      or secret cannot be un-deleted after its recovery window), so this is
+      advisory only, never auto-executed regardless of risk tolerance.
+    kinds: [aws.kms.key, aws.secretsmanager.secret]
+    enabled: true
+    thresholds:
+      min_idle_days: 90

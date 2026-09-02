@@ -1,0 +1,118 @@
+version: 1
+pack: compute
+# EC2 and general-compute rules. Every percentile threshold here is a P95 or
+# P99 ceiling, never a mean: see rule_ec2_rightsize.go for why a mean-based
+# ceiling is unsafe. Money thresholds are monthly USD; day/hour thresholds are
+# wall-clock. See rules/README.md for the override mechanism.
+rules:
+  - id: ec2-underutilized-rightsize
+    name: "EC2 underutilized — rightsize down the family ladder"
+    category: rightsizing
+    action: resize_instance
+    description: >
+      An EC2 instance whose P95 and P99 CPU and memory utilization both show
+      sustained headroom over the observation window is a candidate to step
+      down one rung on its instance-family ladder. Uses P95/P99, never the
+      mean, so a nightly-batch spike is never missed.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      cpu_p95_max: 40
+      cpu_p99_max: 55
+      mem_p95_max: 55
+      mem_p99_max: 70
+      min_coverage: 0.5
+      min_window_hours: 168
+      headroom_buffer_pct: 15
+      min_monthly_saving: 15
+
+  - id: ec2-oversized-declared-workload
+    name: "EC2 oversized relative to declared workload type"
+    category: rightsizing
+    action: resize_instance
+    description: >
+      A batch or worker workload declared in the specification is running on
+      a general-purpose or memory-optimized instance far larger than its
+      declared type typically needs, independent of live telemetry — useful
+      before an instance has accumulated a metric history.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      batch_max_vcpu: 4
+      min_monthly_saving: 15
+
+  - id: ec2-stopped-still-billing-storage
+    name: "Stopped EC2 instance still billing attached storage"
+    category: waste
+    action: advisory_only
+    description: >
+      A stopped EC2 instance stops its compute charge but its attached EBS
+      volumes keep billing. An instance stopped well past a normal
+      maintenance window is a candidate to terminate (after a final
+      snapshot) or resume; CloudOptix advises rather than auto-terminates
+      because the decision needs a human's context.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      min_stopped_days: 14
+      min_monthly_saving: 5
+
+  - id: ec2-never-used-instance
+    name: "EC2 instance with no observed utilization"
+    category: waste
+    action: stop_instance
+    description: >
+      An instance whose CPU has not exceeded a near-zero ceiling at P99 for a
+      full observation window, with adequate metric coverage, has never been
+      used for real work.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      cpu_p99_max: 2
+      min_window_hours: 336
+      min_coverage: 0.5
+      min_monthly_saving: 5
+
+  - id: ec2-previous-generation-instance
+    name: "Previous-generation instance with a same-or-better successor"
+    category: rightsizing
+    action: resize_instance
+    description: >
+      The price book's InstanceSpec names a current-generation successor for
+      this instance type at equal or better capacity and a lower on-demand
+      price. Includes cross-architecture successors (e.g. t3 -> t4g).
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 5
+
+  - id: ec2-burstable-credit-exhaustion
+    name: "Burstable instance on unlimited credits costing more than fixed-size"
+    category: rightsizing
+    action: resize_instance
+    description: >
+      A t-family instance running in unlimited credit mode with sustained
+      CPU above its baseline is paying surplus-credit charges that, summed
+      with the base rate, exceed a fixed-performance instance of comparable
+      capacity.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      cpu_p50_min: 35
+      min_monthly_saving: 8
+
+  - id: ec2-schedule-off-hours
+    name: "Idle outside business hours — scheduling candidate"
+    category: scheduling
+    action: schedule_shutdown
+    description: >
+      A non-production instance shows a real diurnal pattern (detected
+      seasonality) with near-zero utilization outside a recurring window,
+      making it a candidate for an automatic start/stop schedule.
+    kinds: [aws.ec2.instance]
+    enabled: true
+    thresholds:
+      off_hours_cpu_max: 5
+      min_off_hours_fraction: 0.35
+      min_coverage: 0.5
+      min_monthly_saving: 10

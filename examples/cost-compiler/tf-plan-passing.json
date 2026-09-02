@@ -1,0 +1,90 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "variables": {
+    "environment": { "value": "production" },
+    "region": { "value": "us-east-1" }
+  },
+  "resource_changes": [
+    {
+      "address": "module.search_warmer.aws_launch_template.warmer",
+      "module_address": "module.search_warmer",
+      "type": "aws_launch_template",
+      "name": "warmer",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "instance_type": "m5.large",
+          "tags": {
+            "Application": "catalog-search",
+            "Team": "search",
+            "Environment": "production"
+          }
+        }
+      }
+    },
+    {
+      "address": "module.search_warmer.aws_autoscaling_group.warmer",
+      "module_address": "module.search_warmer",
+      "type": "aws_autoscaling_group",
+      "name": "warmer",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "min_size": 3,
+          "max_size": 3,
+          "desired_capacity": 3,
+          "tag": [
+            { "key": "Application", "value": "catalog-search", "propagate_at_launch": true },
+            { "key": "Team", "value": "search", "propagate_at_launch": true },
+            { "key": "Environment", "value": "production", "propagate_at_launch": true }
+          ]
+        }
+      }
+    },
+    {
+      "address": "module.search_warmer.aws_lb.warmer",
+      "module_address": "module.search_warmer",
+      "type": "aws_lb",
+      "name": "warmer",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "load_balancer_type": "application",
+          "internal": true,
+          "tags": {
+            "Application": "catalog-search",
+            "Team": "search",
+            "Environment": "production"
+          }
+        }
+      }
+    },
+    {
+      "address": "module.search_warmer.aws_lb_target_group.warmer",
+      "module_address": "module.search_warmer",
+      "type": "aws_lb_target_group",
+      "name": "warmer",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "port": 8080,
+          "protocol": "HTTP",
+          "tags": {
+            "Application": "catalog-search",
+            "Team": "search",
+            "Environment": "production"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,107 @@
+# regulated.yaml — for tenants under a compliance framework that names
+# segregation of duties, change freezes, and a full approval trail as
+# controls an auditor will actually check for (SOC 2, PCI-DSS, HIPAA, FedRAMP
+# and similar).
+#
+# Intent: like conservative.yaml, nothing ever auto-executes — but this pack
+# adds two things conservative.yaml does not: a change-freeze mechanism keyed
+# on a tag an operations team sets during a freeze period (a release
+# blackout, a quarter-end close, an audit window), and every approval
+# requires two distinct, named-role approvers with segregation of duties
+# enforced, on every change, in every environment — not only production.
+# The audit trail this produces (every govern.Decision and every
+# govern.Response is already persisted by the platform, see
+# internal/domain/govern/approval.go) is what an auditor is shown: who
+# requested, who approved, under which policy version, and why.
+#
+# On expressing a change freeze: govern.Match has no native "outside this
+# time window" concept — MaintenanceWindow-style guards express the
+# opposite (allowed windows), not a freeze calendar. This pack models a
+# freeze as a tag: an operations team applies a change_freeze=active tag
+# (to the resource, application, or via a broader tagging convention) for
+# the freeze's duration, and the rule below turns that tag into a hard
+# prohibition for as long as it is set. This is intentionally an
+# operational control (someone applies and removes the tag) rather than a
+# scheduled one, which is the honest match for what the current schema can
+# express — see policies/README.md if a scheduled freeze calendar becomes a
+# real requirement, since that would need a schema change, not a new rule.
+name: regulated
+description: >-
+  No automation, ever. Two distinct approvers with segregation of duties on
+  every change in every environment, plus a tag-based change-freeze
+  prohibition. For tenants under a compliance framework that audits
+  approval trails.
+version: 1
+enabled: true
+default_effect: require_approval
+
+rules:
+  - id: regulated.change-freeze.prohibited
+    description: >-
+      A resource or application tagged change_freeze=active is completely
+      off-limits — not "requires an extra approval", prohibited outright —
+      for as long as the tag is set. Removing the tag is itself a change an
+      operations team makes deliberately, which is what gives this control
+      its audit trail: the freeze's start and end are timestamped tag
+      mutations, not a rule anyone had to remember to re-enable.
+    match:
+      tag_selector:
+        change_freeze: active
+    effect: prohibit
+    reason: A declared change freeze is in effect for this resource.
+
+  - id: regulated.destructive.prohibited-outside-explicit-review
+    description: >-
+      Destructive actions require two approvals with segregation of duties,
+      restated explicitly here (see conservative.yaml's identical rule) for
+      the same reviewer-legibility reason — an auditor reading this policy
+      document should not have to trust an invariant they cannot see
+      enforced anywhere in this file.
+    match:
+      actions:
+        - terminate_instance
+        - delete_volume
+        - delete_snapshot
+        - deregister_ami
+        - remove_rds_replica
+        - remove_nat_gateway
+    effect: require_approval
+    min_approvals: 2
+    require_distinct_approver: true
+    approvers: [platform-admin, compliance-officer]
+    reason: Irreversible changes carry the highest evidentiary bar this pack has.
+
+  - id: regulated.production.two-approvals-segregated
+    description: >-
+      Production and DR changes require two approvals from named roles,
+      neither of which may be the requester.
+    match:
+      environments: [production, dr]
+    effect: require_approval
+    min_approvals: 2
+    require_distinct_approver: true
+    approvers: [platform-admin, finops-lead, compliance-officer]
+    reason: >-
+      Segregation of duties on every production change, independent of the
+      change's category or estimated risk score — a compliance framework
+      generally does not carve out exceptions for "but this one looked safe".
+
+  - id: regulated.non-production.two-approvals-segregated
+    description: >-
+      Non-production changes still require two segregated approvals under
+      this pack — the control this pack exists to provide is a complete,
+      uniform approval trail, not a risk-based carve-out for lower
+      environments.
+    match:
+      environments: [development, staging, sandbox, test]
+    effect: require_approval
+    min_approvals: 2
+    require_distinct_approver: true
+    reason: Uniform segregation of duties, everywhere, is the point of this pack.
+
+  - id: regulated.advisory.never-planned
+    description: Architecture recommendations are shown, never planned or executed.
+    match:
+      actions: [advisory_only]
+    effect: advisory_only
+    reason: This action class has no executor; it exists to inform a human's own change.

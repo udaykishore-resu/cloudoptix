@@ -1,0 +1,95 @@
+version: 1
+pack: kubernetes
+# EKS, ECS and Fargate rules. Money thresholds are monthly USD.
+rules:
+  - id: eks-nodegroup-overprovisioned
+    name: "EKS node group over-provisioned for pod-packing density"
+    category: rightsizing
+    action: advisory_only
+    description: >
+      A node group whose real pod-packing density (observed pod resource
+      requests as a fraction of node allocatable capacity) is low is running
+      nodes larger than the scheduled workload needs. Advisory rather than
+      executable: eks:UpdateNodegroupConfig can change a node group's scaling
+      configuration but not its instance type, which is fixed at creation, so
+      acting on this means standing up a replacement node group and draining
+      the current one — a migration a human runs.
+    kinds: [aws.eks.nodegroup]
+    enabled: true
+    thresholds:
+      packed_fraction_max: 0.45
+      min_monthly_saving: 20
+
+  - id: k8s-pod-requests-oversized
+    name: "Pod requests far above observed usage — reclaimable node count"
+    category: rightsizing
+    action: adjust_pod_resources
+    description: >
+      The single largest source of Kubernetes waste: pods requesting far
+      more CPU/memory than they use force the scheduler to reserve capacity
+      nobody consumes. The rule quantifies the reclaimable node count — how
+      many nodes the group could shed if requests matched observed usage
+      with headroom.
+    kinds: [aws.eks.nodegroup]
+    enabled: true
+    thresholds:
+      requested_over_actual_max: 1.8
+      min_monthly_saving: 15
+
+  - id: eks-nodegroup-no-spot
+    name: "Node group with no Spot capacity where the workload tolerates it"
+    category: commitment
+    action: enable_spot_capacity
+    description: >
+      An interruption-tolerant node group (stateless, horizontally scaled,
+      no tier-0 workload pinned to it) running entirely on-demand is leaving
+      the Spot discount on the table.
+    kinds: [aws.eks.nodegroup]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 15
+
+  - id: eks-consolidation-opportunity
+    name: "Karpenter/Cluster-Autoscaler consolidation opportunity"
+    category: rightsizing
+    action: resize_node_group
+    description: >
+      A node group whose packing density and node count together indicate
+      several partially-empty nodes that a bin-packing consolidation pass
+      would merge, distinct from simple over-provisioning because it targets
+      the node *count* rather than the node *size*.
+    kinds: [aws.eks.nodegroup]
+    enabled: true
+    thresholds:
+      packed_fraction_max: 0.55
+      min_node_count: 3
+      min_monthly_saving: 20
+
+  - id: fargate-vs-ec2-breakeven
+    name: "Fargate-vs-EC2 break-even"
+    category: architecture
+    action: advisory_only
+    description: >
+      Fargate's per-task premium over equivalent EC2 capacity is worthwhile
+      below a utilization break-even; above it, EC2 (or Fargate Spot) is
+      cheaper. Architectural, so advisory only.
+    kinds: [aws.ecs.service]
+    enabled: true
+    thresholds:
+      breakeven_utilization_pct: 55
+
+  - id: ecs-service-task-count
+    name: "ECS service task count far above observed concurrency"
+    category: rightsizing
+    action: advisory_only
+    description: >
+      A service's desired task count sized well above its observed
+      concurrent-request or CPU-utilization ceiling is paying for idle task
+      slots. No executor changes an ECS service's desired count in this
+      catalogue, so the recommendation is advisory with the exact reclaimable
+      task count and saving quantified.
+    kinds: [aws.ecs.service]
+    enabled: true
+    thresholds:
+      concurrency_over_desired_max: 0.4
+      min_monthly_saving: 10

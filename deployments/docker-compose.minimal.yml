@@ -1,0 +1,58 @@
+# Zero-dependency demo: the API alone, in-memory storage
+# (internal/adapters/memstore), the scripted LLM provider, the simulated AWS
+# estate, and the demo tenant seeded on boot. No Postgres, no Redis, no AWS
+# credentials, no LLM API key.
+#
+#   docker compose -f deployments/docker-compose.minimal.yml up
+#
+# and there is genuinely nothing else to stand up first — the fastest
+# possible "let me see what this is" path for someone evaluating CloudOptix.
+# Every setting below is also the platform's default (see
+# internal/infrastructure/config.Defaults), so this file is really just a
+# port mapping plus a dev token.
+#
+# Not a substitute for docker-compose.yml: in-memory storage means every
+# recommendation, execution plan and audit entry is gone on restart, and
+# in-process locking means exactly one replica is safe — Config.Validate
+# refuses both in production for those reasons.
+#
+# Once it is up:
+#
+#   curl -s localhost:8080/readyz
+#   curl -s -H "Authorization: Bearer dev-local-token-not-a-secret" \
+#     localhost:8080/api/v1/recommendations/summary
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        VERSION: local-minimal
+    command: ["--seed-demo"]
+    ports:
+      - "8080:8080"
+    environment:
+      CLOUDOPTIX_ENVIRONMENT: development
+      CLOUDOPTIX_SERVER_HOST: "0.0.0.0"
+      CLOUDOPTIX_SERVER_PORT: "8080"
+      # The zero-infrastructure trio. Each is already the default; they are
+      # stated explicitly so this file documents what it is running on
+      # rather than relying on a default a reader would have to go look up.
+      CLOUDOPTIX_STORAGE: memory
+      CLOUDOPTIX_CACHE: memory
+      CLOUDOPTIX_EVENTS: inprocess
+      CLOUDOPTIX_AWS_MODE: simulated
+      CLOUDOPTIX_LLM_PROVIDER: scripted
+      CLOUDOPTIX_LLM_MODEL: claude-scripted-v1
+      CLOUDOPTIX_TELEMETRY_LOG_LEVEL: info
+      CLOUDOPTIX_TELEMETRY_LOG_FORMAT: text
+      CLOUDOPTIX_AUTH_DEV_STATIC_TOKEN_ENABLED: "true"
+      CLOUDOPTIX_AUTH_DEV_STATIC_TOKEN: "dev-local-token-not-a-secret"
+      CLOUDOPTIX_AWS_REGION: us-east-1
+    healthcheck:
+      test: ["CMD", "/app/coptx", "version"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s

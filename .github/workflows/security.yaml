@@ -1,0 +1,132 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Catches a newly-disclosed CVE against a dependency that hasn't
+    # changed — govulncheck and Trivy's databases update daily even when
+    # this repo doesn't.
+    - cron: "0 6 * * *"
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  dependency-review:
+    name: dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy-images:
+    name: trivy (container images)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: api, dockerfile: deployments/docker/Dockerfile }
+          - { name: frontend, dockerfile: deployments/docker/Dockerfile.frontend }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build image (local, not pushed)
+        run: |
+          docker buildx build \
+            --load \
+            -f ${{ matrix.target.dockerfile }} \
+            -t cloudoptix-${{ matrix.target.name }}:scan \
+            --build-arg VERSION=${{ github.sha }} \
+            .
+      - name: trivy scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cloudoptix-${{ matrix.target.name }}:scan
+          format: sarif
+          output: trivy-${{ matrix.target.name }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.target.name }}.sarif
+          category: trivy-${{ matrix.target.name }}
+
+  terraform-security:
+    name: checkov + tfsec (terraform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          # terraform/demo is INTENTIONALLY misconfigured (unattached
+          # volumes, a bucket with no lifecycle policy, three NAT gateways
+          # with no S3 endpoint — see that directory's README) — scanning
+          # it for "best practice" violations would be checking that a
+          # deliberately bad example is bad, which is not a useful CI
+          # signal. terraform/bootstrap is excluded because it is a
+          # one-time, human-run, local-state configuration, not part of
+          # the deployed platform.
+          skip_path: |
+            terraform/demo
+            terraform/bootstrap
+          soft_fail: false
+      - name: upload checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+      - name: tfsec
+        uses: aquasecurity/tfsec-sarif-action@v0.1.4
+        with:
+          sarif_file: tfsec-results.sarif
+          working_directory: terraform
+      - name: upload tfsec SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: tfsec-results.sarif
+          category: tfsec

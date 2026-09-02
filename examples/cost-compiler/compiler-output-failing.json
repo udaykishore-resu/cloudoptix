@@ -1,0 +1,176 @@
+{
+  "compilation_result": {
+    "id": "compile_1d77b3ee",
+    "tenant_id": "tenant_northfield",
+    "source": "terraform_plan",
+    "label": "PR #4193: multi-AZ NAT topology + orders-db upsize",
+    "changes": [
+      {
+        "address": "module.orders_platform_multi_az.aws_nat_gateway.az_a",
+        "resource_type": "aws_nat_gateway",
+        "kind": "nat_gateway",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$632.85",
+        "monthly_delta": "$632.85",
+        "usage_dependent": true,
+        "assumptions": [
+          {
+            "field": "gb_processed",
+            "assumed_value": "13,333 GB/month",
+            "basis": "one-third of the combined 40,000 GB/month assumption for this 3-gateway group, modelled from the orders-api workload's current outbound traffic profile"
+          }
+        ],
+        "unpriced": false,
+        "price_components": [
+          { "name": "nat_gateway_hours", "unit": "hour", "quantity": 730, "unit_price": "$0.045", "monthly": "$32.85", "price_basis": "on_demand" },
+          { "name": "data_processing", "unit": "GB", "quantity": 13333, "unit_price": "$0.045", "monthly": "$600.00", "price_basis": "on_demand" }
+        ],
+        "warnings": [
+          "Data processing volume is a modelled assumption, not a measured value — this NAT gateway does not exist yet. If actual traffic differs from the orders-api profile used for this estimate, the real cost will differ proportionally."
+        ]
+      },
+      {
+        "address": "module.orders_platform_multi_az.aws_nat_gateway.az_b",
+        "resource_type": "aws_nat_gateway",
+        "kind": "nat_gateway",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$632.85",
+        "monthly_delta": "$632.85",
+        "usage_dependent": true,
+        "assumptions": [
+          { "field": "gb_processed", "assumed_value": "13,333 GB/month", "basis": "see az_a" }
+        ],
+        "unpriced": false,
+        "price_components": [
+          { "name": "nat_gateway_hours", "unit": "hour", "quantity": 730, "unit_price": "$0.045", "monthly": "$32.85", "price_basis": "on_demand" },
+          { "name": "data_processing", "unit": "GB", "quantity": 13333, "unit_price": "$0.045", "monthly": "$600.00", "price_basis": "on_demand" }
+        ],
+        "warnings": ["See module.orders_platform_multi_az.aws_nat_gateway.az_a."]
+      },
+      {
+        "address": "module.orders_platform_multi_az.aws_nat_gateway.az_c",
+        "resource_type": "aws_nat_gateway",
+        "kind": "nat_gateway",
+        "action": "create",
+        "region": "us-east-1",
+        "before_monthly": "$0.00",
+        "after_monthly": "$632.85",
+        "monthly_delta": "$632.85",
+        "usage_dependent": true,
+        "assumptions": [
+          { "field": "gb_processed", "assumed_value": "13,333 GB/month", "basis": "see az_a" }
+        ],
+        "unpriced": false,
+        "price_components": [
+          { "name": "nat_gateway_hours", "unit": "hour", "quantity": 730, "unit_price": "$0.045", "monthly": "$32.85", "price_basis": "on_demand" },
+          { "name": "data_processing", "unit": "GB", "quantity": 13333, "unit_price": "$0.045", "monthly": "$600.00", "price_basis": "on_demand" }
+        ],
+        "warnings": ["See module.orders_platform_multi_az.aws_nat_gateway.az_a."]
+      },
+      {
+        "address": "module.orders_platform_multi_az.aws_db_instance.orders",
+        "resource_type": "aws_db_instance",
+        "kind": "rds_instance",
+        "action": "update",
+        "region": "us-east-1",
+        "before_monthly": "$175.20",
+        "after_monthly": "$700.80",
+        "monthly_delta": "$525.60",
+        "usage_dependent": false,
+        "unpriced": false,
+        "price_components": [
+          { "name": "instance_hours", "unit": "instance-hour", "quantity": 730, "unit_price": "$0.96", "monthly": "$700.80", "price_basis": "on_demand" }
+        ],
+        "warnings": ["Instance class change db.r5.large -> db.r5.2xlarge; no evidence of a corresponding utilization finding or discovery recommendation prompted this change — it is not associated with any open optimize.Recommendation."]
+      }
+    ],
+    "baseline_monthly": "$175.20",
+    "projected_monthly": "$2,599.35",
+    "monthly_delta": "$2,424.15",
+    "annual_delta": "$29,089.80",
+    "delta_pct": 13.10,
+    "created_count": 3,
+    "updated_count": 1,
+    "deleted_count": 0,
+    "unpriced_count": 0,
+    "coverage": 1.0,
+    "confidence": 0.74,
+    "assumptions": [
+      {
+        "field": "gb_processed",
+        "assumed_value": "40,000 GB/month combined across 3 gateways",
+        "basis": "modelled from the orders-api workload's current outbound traffic profile, applied to a topology that does not exist yet"
+      }
+    ],
+    "risks": [
+      {
+        "code": "NAT_GATEWAY_MULTI_AZ_ADDED",
+        "severity": "high",
+        "address": "module.orders_platform_multi_az",
+        "summary": "3 NAT gateways added, one per AZ, combined $1,898.55/month projected cost, 95% of it a usage-dependent data-processing assumption",
+        "detail": "This estate already carries an unresolved NAT-waste finding of $12,348.00/month on its existing gateways (no S3 VPC endpoint present — see the NAT elimination optimization scenario). Adding three more gateways in a new topology without first addressing the existing finding, or without evaluating whether a shared/consolidated NAT design or additional VPC endpoints would serve this new topology instead, compounds a cost category this tenant is already actively working to reduce.",
+        "monthly_impact": "$1,898.55",
+        "remediation": "Confirm whether an S3 (and other applicable) gateway VPC endpoint is planned for this new topology before merging, and whether 3 independent gateways are required versus a consolidated design; route through architecture review per this tenant's own cost test suite."
+      }
+    ],
+    "opportunities": [],
+    "pricing_date": "2026-08-01T00:00:00Z",
+    "compiled_at": "2026-08-29T16:41:03Z",
+    "duration_ms": 211
+  },
+  "regression_report": {
+    "id": "regrep_6c40aa19",
+    "tenant_id": "tenant_northfield",
+    "compilation_id": "compile_1d77b3ee",
+    "suite_name": "platform-cost-guardrails",
+    "verdict": "FAIL",
+    "results": [
+      {
+        "name": "nat-gateway-requires-review",
+        "kind": "forbidden_resource",
+        "verdict": "FAIL",
+        "expected": "no aws_nat_gateway resources in the change set",
+        "actual": "3 aws_nat_gateway resources",
+        "message": "New NAT gateways require architecture review before merge — this estate already carries $12,348.00/month of avoidable NAT data-processing waste from gateways added without a VPC endpoint review.",
+        "offenders": [
+          "module.orders_platform_multi_az.aws_nat_gateway.az_a",
+          "module.orders_platform_multi_az.aws_nat_gateway.az_b",
+          "module.orders_platform_multi_az.aws_nat_gateway.az_c"
+        ]
+      },
+      {
+        "name": "workload-monthly-increase-cap",
+        "kind": "max_monthly_increase_pct",
+        "verdict": "FAIL",
+        "expected": "<= 10.0% increase against the orders-api workload's current baseline ($18,500.00/mo)",
+        "actual": "13.10% ($2,424.15/mo against $18,500.00/mo baseline)",
+        "message": "Production monthly cost increase must not exceed 10% of the affected workload's current baseline without explicit sign-off."
+      },
+      {
+        "name": "new-resources-must-be-tagged",
+        "kind": "require_tags",
+        "verdict": "PASS",
+        "expected": "Application, Team, Environment present on every new resource",
+        "actual": "all 3 new resources fully tagged",
+        "message": "No untagged resources."
+      },
+      {
+        "name": "pricing-coverage-floor",
+        "kind": "max_unpriced_ratio",
+        "verdict": "PASS",
+        "expected": "<= 10% of monthly delta unpriced",
+        "actual": "0% unpriced (0/4 resources)",
+        "message": "Full pricing coverage — though note 73% of projected monthly cost is usage-dependent modelling (see confidence: 0.74), a different concern from unpriced coverage."
+      }
+    ],
+    "monthly_delta": "$2,424.15",
+    "annual_delta": "$29,089.80",
+    "summary": "COST TEST FAILED: 2 check(s) failed. Monthly impact $2,424.15 ($29,089.80/year).",
+    "required_action": "Architecture review required.",
+    "evaluated_at": "2026-08-29T16:41:03Z"
+  }
+}

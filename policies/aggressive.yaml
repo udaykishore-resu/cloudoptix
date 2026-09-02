@@ -1,0 +1,120 @@
+# aggressive.yaml — the highest-autonomy pack CloudOptix ships.
+#
+# Intent: high-confidence, fast-to-reverse changes auto-execute even in
+# production, but only inside a declared maintenance window, and only above
+# a confidence bar the platform itself enforces as a hard floor (see the
+# "Platform invariants" section of policies/README.md — 0.85 minimum
+# confidence for any auto_execute rule reaching production is not this
+# pack's choice, it is the domain's, and no policy pack can lower it).
+# "Aggressive" describes how much CloudOptix is trusted to decide alone, not
+# how much risk it is permitted to take: a destructive action, a change
+# with material blast radius, or one with anything less than fast
+# reversibility still requires approval under this pack, exactly as it
+# does under conservative.yaml.
+#
+# This is the pack for a team that has already run balanced.yaml for a
+# while, reviewed enough of CloudOptix's production-approval requests to
+# trust the confidence scoring, and wants routine, reversible, well-tested
+# categories of change (a scheduled shutdown of a dev-hours-only service,
+# an EC2 rightsize that has been proposed and approved manually a dozen
+# times already) to stop requiring a human's attention every single week.
+#
+# See policies/README.md's "Known limitation" section: the auto_execute
+# rules below cannot currently be selected by internal/domain/govern.Evaluate
+# regardless of how a policy is written (a domain-layer bug, out of this
+# pack's control) — they are written as the product is intended to behave
+# once that is fixed, and every rule already respects every platform
+# invariant an eventual fix would still enforce.
+name: aggressive
+description: >-
+  High-confidence, fast-to-reverse changes auto-execute in production
+  inside a declared maintenance window. Everything else still requires
+  approval. The highest-autonomy pack CloudOptix ships.
+version: 1
+enabled: true
+default_effect: require_approval
+
+rules:
+  - id: aggressive.scheduling.production-window.auto
+    description: >-
+      Scheduled shutdowns and idle-instance stops in production auto-execute
+      inside a declared maintenance window, when confidence is high, risk is
+      low, no critical service is in the blast radius, and the change can be
+      undone in a single API call or a short restart.
+    match:
+      categories: [scheduling, waste]
+      actions:
+        - schedule_shutdown
+        - stop_instance
+        - release_elastic_ip
+        - remove_provisioned_concurrency
+      environments: [production]
+      min_confidence: 0.9
+      max_risk_level: LOW
+      max_blast_score: 0.2
+      max_critical_services: 0
+      min_reversibility: fast
+      require_maintenance_window: true
+    effect: auto_execute
+    maintenance_windows: [default-weekly-window]
+    reason: >-
+      Every guard this pack can set is set: high confidence, low risk, zero
+      critical services in the blast radius, fast reversibility, and a
+      window a human already agreed changes may land in.
+
+  - id: aggressive.rightsizing.production-window.auto
+    description: >-
+      EC2 and RDS rightsizing in production auto-executes inside a
+      maintenance window when the recommendation clears the same high bar:
+      very high confidence, low risk, no critical service impact, and a
+      change that a restart or a single API call can undo.
+    match:
+      actions: [resize_instance, resize_rds_instance, resize_lambda_memory]
+      environments: [production]
+      min_confidence: 0.92
+      max_risk_level: LOW
+      max_blast_score: 0.15
+      max_critical_services: 0
+      min_reversibility: fast
+      require_maintenance_window: true
+    effect: auto_execute
+    maintenance_windows: [default-weekly-window]
+    reason: >-
+      Rightsizing is reversible (resize back) and, at this confidence
+      level, has already been right far more often than a reviewer's own
+      spot-check would catch a miss — the maintenance window bounds when a
+      wrong call is discovered to a time someone is already watching.
+
+  - id: aggressive.non-production.auto
+    description: Non-production waste, scheduling, and rightsizing changes auto-execute without a window requirement.
+    match:
+      categories: [waste, scheduling, rightsizing]
+      environments: [development, staging, sandbox, test]
+      min_confidence: 0.8
+      max_risk_level: MEDIUM
+    effect: auto_execute
+    reason: Non-production carries no customer-facing consequence for a miss, so this pack does not gate it on a maintenance window.
+
+  - id: aggressive.destructive.always-approval
+    description: >-
+      Destructive actions always require approval under this pack too —
+      "aggressive" governs how much CloudOptix decides alone, never whether
+      an irreversible change gets a human's attention.
+    match:
+      actions:
+        - terminate_instance
+        - delete_volume
+        - delete_snapshot
+        - deregister_ami
+        - remove_rds_replica
+        - remove_nat_gateway
+    effect: require_approval
+    min_approvals: 1
+    reason: Restated for reviewer legibility, and because the platform itself would reject a policy that tried the alternative.
+
+  - id: aggressive.advisory.never-planned
+    description: Architecture recommendations are shown, never planned or executed.
+    match:
+      actions: [advisory_only]
+    effect: advisory_only
+    reason: This action class has no executor; it exists to inform a human's own change.

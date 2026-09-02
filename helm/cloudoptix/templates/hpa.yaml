@@ -1,0 +1,50 @@
+{{- range $name, $comp := .Values.components }}
+{{- if and $comp.enabled $comp.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "cloudoptix.componentFullname" (list $ $name $comp) }}
+  labels:
+    {{- include "cloudoptix.componentLabels" (list $ $name $comp) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "cloudoptix.componentFullname" (list $ $name $comp) }}
+  minReplicas: {{ $comp.autoscaling.minReplicas }}
+  maxReplicas: {{ $comp.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $comp.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if $comp.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $comp.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  behavior:
+    # Scale up fast (a queue backing up is exactly when you want more
+    # workers within seconds, not minutes) but scale down cautiously — a
+    # worker mid-execution-plan should not be reclaimed just because
+    # average CPU dipped for one sampling window.
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 120
+---
+{{- end }}
+{{- end }}

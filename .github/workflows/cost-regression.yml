@@ -1,0 +1,131 @@
+name: Cost Regression
+
+# The product eating its own dog food: every PR touching terraform/ gets a
+# real terraform plan, priced by CloudOptix's own Cost Compiler
+# (internal/application/compiler), evaluated against a regression suite
+# (.github/cost-regression-suite.yaml — the same simulate.RegressionSuite
+# shape a tenant configures for their own infrastructure via the Cost
+# Regression API), and posted back as a PR comment with the verdict.
+#
+# The gate is `coptx cost test`, which exits 1 on FAIL and 0 on PASS or
+# WARNING. That is the same binary and the same code path a customer runs in
+# their own pipeline — before cmd/coptx existed this workflow compiled a
+# throwaway Go program at CI time to reach the compiler package, which meant
+# CI was exercising an entrypoint no customer had.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+
+concurrency:
+  group: cost-regression-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+env:
+  GO_VERSION: "1.24"
+  TERRAFORM_VERSION: "1.9.8"
+  # Representative environment: every terraform/environments/* composition
+  # wires the same modules together (see each one's main.tf) at different
+  # sizes, so a cost delta from a module change shows up here whether or
+  # not this specific PR also touches environments/production directly.
+  # dev is cheapest and fastest to plan; the point of this workflow is a
+  # fast, real, priced signal on the PR, not a duplicate plan against
+  # every environment.
+  TARGET_DIR: terraform/environments/dev
+
+jobs:
+  cost-regression:
+    name: plan, price, and gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      # Real credentials, scoped read-only, via OIDC — no long-lived AWS
+      # key in this repository's secrets. Configure
+      # COST_REGRESSION_AWS_ROLE_ARN as a repo/environment secret pointing
+      # at a role trusting this repo's OIDC provider, granted only the
+      # read-only actions `terraform plan` needs (ec2:Describe*,
+      # rds:Describe*, and so on — never anything from
+      # terraform/modules/cloudoptix-onboarding-role's execute tier, which
+      # has no business existing in a CI role at all).
+      - name: configure AWS credentials
+        if: ${{ vars.COST_REGRESSION_AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.COST_REGRESSION_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: terraform init
+        working-directory: ${{ env.TARGET_DIR }}
+        run: terraform init -backend=false
+
+      - name: terraform plan -> JSON
+        id: plan
+        working-directory: ${{ env.TARGET_DIR }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ vars.COST_REGRESSION_AWS_ROLE_ARN }}" ]]; then
+            echo "::warning::COST_REGRESSION_AWS_ROLE_ARN is not set — skipping a real plan and using a synthetic empty plan so this workflow still demonstrates its shape. Set the repo variable to enable a real cost-regression signal."
+            echo '{"format_version":"1.2","resource_changes":[]}' > plan.json
+          else
+            terraform plan -out=tfplan -input=false
+            # NOTE: the task that specified this workflow says
+            # `terraform plan -json`; the actual command that produces the
+            # structured resource_changes document
+            # internal/application/compiler/terraform_plan.go parses is
+            # `terraform show -json` against a saved plan file — `terraform
+            # plan -json` alone streams line-delimited UI events, not this
+            # schema. Both are shown here so the discrepancy is visible
+            # rather than silently "fixed" without comment.
+            terraform show -json tfplan > plan.json
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: build coptx
+        run: go build -o "${RUNNER_TEMP}/coptx" ./cmd/coptx
+
+      - name: price & evaluate (Cost Compiler)
+        id: compile
+        run: |
+          set -euo pipefail
+          # --format=markdown renders the same PR comment
+          # compiler.RenderPRComment produces for a tenant's own pipeline;
+          # --out writes it to disk for the comment step below. The exit
+          # code is the gate: 1 on FAIL, 0 on PASS or WARNING.
+          set +e
+          "${RUNNER_TEMP}/coptx" cost test \
+            --source=terraform-plan \
+            --file="${GITHUB_WORKSPACE}/${TARGET_DIR}/plan.json" \
+            --suite="${GITHUB_WORKSPACE}/.github/cost-regression-suite.yaml" \
+            --environment=dev \
+            --format=markdown \
+            --out="${GITHUB_WORKSPACE}/pr-comment.md"
+          verdict_exit=$?
+          set -e
+          cat "${GITHUB_WORKSPACE}/pr-comment.md"
+          if [[ ${verdict_exit} -ne 0 ]]; then
+            echo "::error::the cost regression suite failed; the PR comment names which checks and why"
+          fi
+          exit ${verdict_exit}
+
+      - name: post PR comment
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: cost-regression
+          path: pr-comment.md

@@ -1,0 +1,144 @@
+# Worked example: serverless startup
+#
+# The smallest, sparsest of the four examples deliberately — a five-person
+# engineering team six months post-seed, one AWS account, no formal
+# governance function, and several fields left UNKNOWN because nobody has
+# had reason to establish an answer yet. This is intentional: the schema
+# only requires a small top-level set of sections to be present at all
+# (see ../cloudoptix.schema.json's top-level `required`), and this example
+# shows how thin a legitimately-approved spec is allowed to be, not just
+# how large one can get. Validates against ../cloudoptix.schema.json.
+
+apiVersion: cloudoptix.io/v1
+kind: CloudOptixSpec
+
+organization:
+  name: Loopwave
+  industry: saas
+  size: "5 employees"
+  businessRegions:
+    - us
+  primaryContact: founders@loopwave.example
+
+application:
+  name: loopwave-api
+  description: >-
+    A webhook-relay and event-transformation SaaS product. The whole
+    product is this one API plus its background processors.
+  domain: developer-tools
+  criticality: high
+  architecture:
+    style: serverless
+    computePlatforms:
+      - lambda
+    databases:
+      - dynamodb
+    messaging:
+      - sqs
+      - eventbridge
+    storage:
+      - s3
+    networking:
+      - api-gateway
+    observability:
+      - cloudwatch
+    deploymentModel: UNKNOWN # no formal deployment model has ever been decided; deploys are `sam deploy` run manually from a laptop
+    iac:
+      - sam
+
+aws:
+  accessMode: assume_role
+  payerAccountId: "600000000001"
+  accounts:
+    - id: "600000000001"
+      alias: loopwave-main
+      environment: production
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::600000000001:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-loopwave01
+      production: true
+
+workloads:
+  - name: loopwave-api
+    type: service
+    platform: lambda
+    environment: production
+    criticality: high
+    owner: founders@loopwave.example
+    dependsOn:
+      - loopwave-events-table
+    slo:
+      availability: 0.995
+      latencyP95Ms: 400
+
+business:
+  transactions:
+    - name: webhook-relay
+      description: One inbound webhook received, transformed, and forwarded.
+      monthlyVolume: 42000000
+      workloads: [loopwave-api]
+      targetCostPerUnit: 0.00009
+      volumeMetric: webhooks_relayed
+      critical: true
+  customerCount: 340
+  trafficProfile: "bursty, driven by customers' own traffic spikes; no predictable daily pattern yet"
+
+objectives:
+  costReductionTarget: 0.10
+  monthlyBudget: 4500
+  timeframe: "runway extension — every dollar matters until next raise"
+  costSlos:
+    - name: relay-cost-per-webhook
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.00009
+      transaction: webhook-relay
+      window: rolling_30d
+      errorBudgetPct: 0.25
+      breachActions: [notify]
+
+optimization:
+  riskTolerance: high
+  spotAllowed: false # no EC2 in this estate; field still required by the schema, set false as a deliberate no-op
+  commitmentAppetite: minimal
+  minSavingThreshold: 5
+
+automation:
+  enabled: false
+  autoRollback: true
+
+governance:
+  productionChangesRequireApproval: false
+  segregationOfDuties: false
+  policyPack: conservative
+
+security:
+  awsAccessMode: assume_role
+  encryptionRequired: true
+  auditRetentionDays: 365
+
+observability:
+  metricsSources: [cloudwatch]
+  tracingEnabled: false
+  logRetentionDays: 14
+
+notifications:
+  channels:
+    - name: founders-email
+      type: email
+      target: founders@loopwave.example
+      severities: [high, critical]
+  subscriptions:
+    cost_slo_breach: [founders-email]
+
+teams:
+  - name: engineering
+    contact: founders@loopwave.example
+    owns: [loopwave-api]
+    members:
+      - email: ada.lindqvist@loopwave.example
+        name: Ada Lindqvist
+        roles: [tenant_admin, architect, developer]
+      - email: sam.okonkwo@loopwave.example
+        name: Sam Okonkwo
+        roles: [developer]

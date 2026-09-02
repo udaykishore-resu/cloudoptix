@@ -1,0 +1,232 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.24"
+  NODE_VERSION: "20"
+  TERRAFORM_VERSION: "1.9.8"
+  HELM_VERSION: "3.16.4"
+
+jobs:
+  go-build-vet:
+    name: go build & vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go build
+        run: go build ./...
+      - name: the three binaries build
+        # Named explicitly rather than relying on ./... so a broken
+        # entrypoint fails with the binary's name in the log rather than as
+        # one line among two hundred packages.
+        run: |
+          go build -o /dev/null ./cmd/cloudoptix-api
+          go build -o /dev/null ./cmd/cloudoptix-worker
+          go build -o /dev/null ./cmd/coptx
+      - name: go vet
+        run: go vet ./...
+
+  gofmt:
+    name: gofmt check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: gofmt -l (fails if any file is unformatted)
+        run: |
+          UNFORMATTED="$(gofmt -l .)"
+          if [[ -n "${UNFORMATTED}" ]]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "${UNFORMATTED}"
+            echo
+            echo "Run: gofmt -w <file>"
+            exit 1
+          fi
+
+  staticcheck:
+    name: staticcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: install staticcheck
+        id: install
+        continue-on-error: true
+        run: go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
+      - name: run staticcheck
+        if: steps.install.outcome == 'success'
+        run: staticcheck ./...
+      - name: staticcheck unavailable
+        if: steps.install.outcome != 'success'
+        run: |
+          echo "::warning::staticcheck could not be installed (network-restricted runner?) — this job step is skipped rather than failing the build. See go-vet and go-test for the enforced static analysis in that environment."
+
+  test:
+    name: unit tests (race + coverage)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cloudoptix_test
+          POSTGRES_USER: cloudoptix
+          POSTGRES_PASSWORD: cloudoptix
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cloudoptix"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go test (race, coverage)
+        env:
+          CLOUDOPTIX_TEST_DATABASE_HOST: localhost
+          CLOUDOPTIX_TEST_DATABASE_PORT: "5432"
+          CLOUDOPTIX_TEST_DATABASE_USER: cloudoptix
+          CLOUDOPTIX_TEST_DATABASE_PASSWORD: cloudoptix
+          CLOUDOPTIX_TEST_DATABASE_NAME: cloudoptix_test
+          CLOUDOPTIX_TEST_REDIS_ADDR: "localhost:6379"
+        # 20m rather than the 10m default: tests/e2e and tests/integration
+        # drive the whole platform against the 870-resource demo estate, and
+        # the race detector's ~10x slowdown puts the integration package past
+        # ten minutes on a standard runner. A timeout that trips is
+        # indistinguishable from a deadlock in the log, so it is set where a
+        # genuine hang would still be caught.
+        run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+      - name: coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+      - uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  architecture-deps:
+    name: architecture dependency check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: internal/domain and internal/application must not import internal/adapters
+        run: |
+          chmod +x .github/scripts/check-architecture-deps.sh
+          .github/scripts/check-architecture-deps.sh
+
+  frontend:
+    name: frontend build & typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: lint
+        run: npm run lint
+      - name: build
+        run: npm run build
+
+  terraform:
+    name: terraform fmt & validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - terraform/modules/network
+          - terraform/modules/eks
+          - terraform/modules/rds
+          - terraform/modules/redis
+          - terraform/modules/messaging
+          - terraform/modules/storage
+          - terraform/modules/security
+          - terraform/modules/observability
+          - terraform/modules/cloudoptix-onboarding-role
+          - terraform/environments/dev
+          - terraform/environments/staging
+          - terraform/environments/production
+          - terraform/demo
+          - terraform/bootstrap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - name: terraform fmt -check (whole tree, once)
+        if: matrix.module == 'terraform/modules/network'
+        run: terraform fmt -check -recursive terraform/
+      - name: terraform init (no backend, validate only)
+        working-directory: ${{ matrix.module }}
+        run: terraform init -backend=false
+      - name: terraform validate
+        working-directory: ${{ matrix.module }}
+        run: terraform validate
+
+  helm:
+    name: helm lint & template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: helm lint (dev values)
+        run: helm lint helm/cloudoptix -f helm/cloudoptix/values.yaml -f helm/cloudoptix/values-dev.yaml
+      - name: helm lint (production values)
+        run: helm lint helm/cloudoptix -f helm/cloudoptix/values.yaml -f helm/cloudoptix/values-production.yaml
+      - name: helm template (production values) renders valid YAML
+        run: |
+          helm template cloudoptix helm/cloudoptix \
+            -f helm/cloudoptix/values.yaml -f helm/cloudoptix/values-production.yaml \
+            > /tmp/rendered.yaml
+          python3 -c "import yaml,sys; list(yaml.safe_load_all(open('/tmp/rendered.yaml')))" || \
+          (echo "rendered manifest is not valid YAML" && exit 1)

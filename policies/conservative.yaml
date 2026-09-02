@@ -1,0 +1,87 @@
+# conservative.yaml — the "nothing surprises anyone" policy pack.
+#
+# Intent: nothing ever auto-executes, in any environment. Production changes
+# require two independent approvals with segregation of duties (the
+# requester may never also be an approver). Non-production changes still
+# require one approval — this pack is for organizations in the earliest
+# phase of trusting an optimization platform with write access at all, where
+# the entire value of week one is "CloudOptix tells us what it would do and
+# a human decides every single time."
+#
+# There is exactly one way this pack ever changes AWS: a person reviews a
+# recommendation and clicks approve. If that is not an acceptable trade for
+# your organization's current risk appetite, start here anyway — balanced.yaml
+# is a strict widening of this pack's permissions, never the reverse, so
+# graduating later costs nothing you didn't already choose to spend.
+name: conservative
+description: >-
+  No automation. Every recommendation, in every environment, waits for a
+  human decision before anything changes in AWS. Production requires two
+  approvals from principals other than the requester.
+version: 1
+enabled: true
+default_effect: require_approval
+
+rules:
+  # Destructive actions are already forbidden from auto-executing by the
+  # platform itself (govern.Policy.Validate rejects any policy that tries),
+  # but this pack states it anyway: a policy document that a reviewer has to
+  # read and sign off on should say the load-bearing thing out loud rather
+  # than relying on an invariant enforced somewhere the reviewer cannot see.
+  - id: conservative.destructive.always-two-approvals
+    description: >-
+      Any action that deletes state which cannot be recreated from a
+      snapshot always requires two approvals, everywhere, regardless of
+      confidence or environment.
+    match:
+      actions:
+        - terminate_instance
+        - delete_volume
+        - delete_snapshot
+        - deregister_ami
+        - remove_rds_replica
+        - remove_nat_gateway
+    effect: require_approval
+    min_approvals: 2
+    require_distinct_approver: true
+    reason: >-
+      Irreversible changes are never single-approved under the conservative
+      pack, independent of how the platform's own destructive-action guard
+      already behaves.
+
+  - id: conservative.production.two-approvals
+    description: >-
+      Every change touching a production (or DR) resource requires two
+      approvals from principals other than whoever requested the change.
+    match:
+      environments: [production, dr]
+    effect: require_approval
+    min_approvals: 2
+    require_distinct_approver: true
+    approvers: [platform-admin, finops-lead]
+    reason: >-
+      Production changes are the ones with real customer impact if the
+      recommendation's risk assessment turns out to be wrong; two
+      independent reviewers catch what one alone might miss.
+
+  - id: conservative.non-production.one-approval
+    description: >-
+      Every other change — development, staging, sandbox, test — still
+      requires one approval. Nothing in this pack is unattended.
+    match:
+      environments: [development, staging, sandbox, test]
+    effect: require_approval
+    min_approvals: 1
+    reason: >-
+      Even a low-stakes environment gets a second set of eyes before
+      CloudOptix touches it; this pack's entire premise is "no surprises".
+
+  # advisory_only actions (architecture recommendations with no direct
+  # executor) are never plannable regardless of pack — restated here for the
+  # same reviewer-legibility reason as the destructive rule above.
+  - id: conservative.advisory.never-planned
+    description: Architecture recommendations are shown, never planned or executed.
+    match:
+      actions: [advisory_only]
+    effect: advisory_only
+    reason: This action class has no executor; it exists to inform a human's own change.

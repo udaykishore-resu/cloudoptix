@@ -1,0 +1,233 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * CloudOptix design tokens.
+ * Light palette lives on bare :root; dark overrides are duplicated under both
+ * the system-preference query (guarded to not fire when an explicit light
+ * theme is chosen) and the explicit [data-theme="dark"] / .dark class that
+ * next-themes stamps on <html>, so both the "system" default and an explicit
+ * toggle resolve correctly in either direction.
+ */
+:root {
+  --radius: 0.5rem;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --background: 210 24% 97%;
+  --foreground: 222 47% 12%;
+
+  --surface: 0 0% 100%;
+  --surface-raised: 0 0% 100%;
+  --surface-overlay: 0 0% 100%;
+  --surface-sunken: 210 24% 95%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 12%;
+
+  --border: 214 22% 87%;
+  --border-strong: 214 20% 76%;
+  --input: 214 22% 85%;
+  --ring: 221 76% 48%;
+
+  --primary: 221 76% 40%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 24% 93%;
+  --secondary-foreground: 222 40% 18%;
+  --muted: 214 24% 93%;
+  --muted-foreground: 215 16% 42%;
+  --accent: 262 60% 46%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 356 72% 42%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 64% 28%;
+  --success-foreground: 0 0% 100%;
+  --warning: 32 88% 34%;
+  --warning-foreground: 0 0% 100%;
+  --info: 201 83% 36%;
+  --info-foreground: 0 0% 100%;
+
+  --chart-1: 221 76% 48%;
+  --chart-2: 152 60% 36%;
+  --chart-3: 32 84% 46%;
+  --chart-4: 262 60% 54%;
+  --chart-5: 356 65% 50%;
+  --chart-6: 190 70% 38%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: 222 42% 7%;
+    --foreground: 210 30% 92%;
+
+    --surface: 222 38% 10%;
+    --surface-raised: 221 34% 13%;
+    --surface-overlay: 221 32% 15%;
+    --surface-sunken: 224 44% 6%;
+
+    --card: 221 34% 12%;
+    --card-foreground: 210 30% 92%;
+    --popover: 221 32% 13%;
+    --popover-foreground: 210 30% 92%;
+
+    --border: 217 24% 21%;
+    --border-strong: 217 22% 30%;
+    --input: 217 24% 24%;
+    --ring: 217 91% 65%;
+
+    --primary: 217 91% 65%;
+    --primary-foreground: 222 47% 8%;
+    --secondary: 217 22% 17%;
+    --secondary-foreground: 210 30% 90%;
+    --muted: 217 22% 16%;
+    --muted-foreground: 215 18% 65%;
+    --accent: 262 75% 72%;
+    --accent-foreground: 222 47% 8%;
+
+    --destructive: 356 82% 65%;
+    --destructive-foreground: 222 47% 8%;
+    --success: 152 55% 52%;
+    --success-foreground: 222 47% 8%;
+    --warning: 38 92% 58%;
+    --warning-foreground: 222 47% 8%;
+    --info: 199 89% 62%;
+    --info-foreground: 222 47% 8%;
+
+    --chart-1: 217 91% 65%;
+    --chart-2: 152 55% 52%;
+    --chart-3: 38 92% 58%;
+    --chart-4: 262 75% 72%;
+    --chart-5: 356 82% 65%;
+    --chart-6: 190 80% 55%;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: 222 42% 7%;
+  --foreground: 210 30% 92%;
+
+  --surface: 222 38% 10%;
+  --surface-raised: 221 34% 13%;
+  --surface-overlay: 221 32% 15%;
+  --surface-sunken: 224 44% 6%;
+
+  --card: 221 34% 12%;
+  --card-foreground: 210 30% 92%;
+  --popover: 221 32% 13%;
+  --popover-foreground: 210 30% 92%;
+
+  --border: 217 24% 21%;
+  --border-strong: 217 22% 30%;
+  --input: 217 24% 24%;
+  --ring: 217 91% 65%;
+
+  --primary: 217 91% 65%;
+  --primary-foreground: 222 47% 8%;
+  --secondary: 217 22% 17%;
+  --secondary-foreground: 210 30% 90%;
+  --muted: 217 22% 16%;
+  --muted-foreground: 215 18% 65%;
+  --accent: 262 75% 72%;
+  --accent-foreground: 222 47% 8%;
+
+  --destructive: 356 82% 65%;
+  --destructive-foreground: 222 47% 8%;
+  --success: 152 55% 52%;
+  --success-foreground: 222 47% 8%;
+  --warning: 38 92% 58%;
+  --warning-foreground: 222 47% 8%;
+  --info: 199 89% 62%;
+  --info-foreground: 222 47% 8%;
+
+  --chart-1: 217 91% 65%;
+  --chart-2: 152 55% 52%;
+  --chart-3: 38 92% 58%;
+  --chart-4: 262 75% 72%;
+  --chart-5: 356 82% 65%;
+  --chart-6: 190 80% 55%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-feature-settings: "cv11", "ss01", "tnum";
+}
+
+/* Tabular numbers everywhere a metric renders, so columns of money align. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.28);
+}
+
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Scrollbar tuned to the surface, not the OS default, so the dense tables
+   don't clash with the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border-strong)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--border-strong));
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--muted) / 0.5) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 1.8s infinite linear;
+  }
+}
+
+/* React Flow theme integration */
+.react-flow {
+  --xy-background-color: hsl(var(--surface-sunken));
+  --xy-node-border-radius: var(--radius);
+}
+.react-flow__attribution {
+  display: none;
+}

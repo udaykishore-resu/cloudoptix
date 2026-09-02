@@ -1,0 +1,40 @@
+# simulate.RegressionSuite — "platform-cost-guardrails", version 3.
+#
+# Both cost-compiler examples in this directory are evaluated against this
+# exact suite, unchanged. It is stored and versioned like any other
+# reviewed artifact, not edited per pull request.
+
+name: platform-cost-guardrails
+version: 3
+enabled: true
+checks:
+  - name: nat-gateway-requires-review
+    kind: forbidden_resource
+    resource_types:
+      - aws_nat_gateway
+    on_violation: FAIL
+    message: >-
+      New NAT gateways require architecture review before merge — this
+      estate already carries $12,348.00/month of avoidable NAT
+      data-processing waste from gateways added without a VPC endpoint
+      review; see docs/runbooks and examples/optimization-scenarios for
+      the existing finding.
+
+  - name: workload-monthly-increase-cap
+    kind: max_monthly_increase_pct
+    threshold: 10.0
+    environments: [production]
+    on_violation: FAIL
+    message: "Production monthly cost increase must not exceed 10% of the affected workload's current baseline without explicit sign-off."
+
+  - name: new-resources-must-be-tagged
+    kind: require_tags
+    required_tags: [Application, Team, Environment]
+    on_violation: FAIL
+    message: "Every new billable resource must carry Application, Team, and Environment tags — an untagged resource is a future unattributed cost."
+
+  - name: pricing-coverage-floor
+    kind: max_unpriced_ratio
+    threshold: 0.10
+    on_violation: WARNING
+    message: "More than 10% of this change's cost could not be priced; the delta estimate below is incomplete."

@@ -1,0 +1,67 @@
+version: 1
+pack: serverless
+# Lambda rules. Money thresholds are monthly USD.
+rules:
+  - id: lambda-memory-cost-curve
+    name: "Lambda memory over/under-provisioning (cost-curve optimal)"
+    category: rightsizing
+    action: resize_lambda_memory
+    description: >
+      Lambda bills GB-seconds: memory and duration multiply, and duration
+      falls as memory rises (more memory means a proportionally faster
+      vCPU share) until the function is no longer CPU-bound, after which
+      more memory only adds cost. The rule walks the memory ladder pricing
+      the true GB-second cost at each step from the function's observed
+      duration-vs-memory relationship, and never recommends a memory
+      reduction whose faster-then-flatlines duration curve would raise total
+      cost.
+    kinds: [aws.lambda.function]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 1
+      memory_step_mb: 64
+
+  - id: lambda-unused-provisioned-concurrency
+    name: "Unused Lambda provisioned concurrency"
+    category: waste
+    action: remove_provisioned_concurrency
+    description: >
+      Provisioned concurrency is billed whether or not it is used. A
+      function whose observed concurrent-execution P95 sits far below its
+      provisioned level for a full window is over-provisioned.
+    kinds: [aws.lambda.function]
+    enabled: true
+    thresholds:
+      max_utilization_pct: 15
+      min_window_hours: 168
+      min_monthly_saving: 5
+
+  - id: lambda-graviton-migration
+    name: "Lambda x86 -> arm64 (Graviton) migration"
+    category: rightsizing
+    action: switch_lambda_architecture
+    description: >
+      arm64 Lambda pricing is materially cheaper per GB-second than x86_64
+      at equal memory. A function not already on arm64 is a migration
+      candidate whenever nothing in its runtime is architecture-specific,
+      which the rule cannot verify from telemetry alone — it flags the
+      saving and leaves compatibility confirmation to the reviewer.
+    kinds: [aws.lambda.function]
+    enabled: true
+    thresholds:
+      min_monthly_saving: 1
+
+  - id: lambda-excessive-timeout-advisory
+    name: "Excessive Lambda timeout (advisory — blast radius, not cost)"
+    category: architecture
+    action: advisory_only
+    description: >
+      Lambda's timeout has no cost effect by itself (only actual duration is
+      billed), but a timeout set far beyond the function's observed P99
+      duration widens the blast radius of a hung invocation — it can run,
+      and bill, for far longer than the workload ever needs before AWS kills
+      it. Advisory only; never affects the priority score's savings axis.
+    kinds: [aws.lambda.function]
+    enabled: true
+    thresholds:
+      timeout_to_duration_ratio_min: 8

@@ -1,0 +1,279 @@
+# Worked example: regulated financial-services estate
+#
+# Contrasts deliberately with production-ecommerce.yaml: automation is
+# disabled outright rather than merely scoped to non-production, the
+# governance and security sections are load-bearing rather than
+# boilerplate, and optimization.riskTolerance is low. This is what the
+# "regulated" policy pack (policies/regulated.yaml) is for — see
+# docs/security-spec.md and docs/automation-spec.md. Validates against
+# ../cloudoptix.schema.json.
+
+apiVersion: cloudoptix.io/v1
+kind: CloudOptixSpec
+
+organization:
+  name: Ashcroft Custodial Trust
+  industry: financial-services
+  size: "2100 employees"
+  businessRegions:
+    - us
+  primaryContact: cloud-risk@ashcroftcustodial.example
+
+application:
+  name: ledger-platform
+  description: >-
+    The core ledger, trade-settlement, and account-statement generation
+    system of record. Every entry here is subject to SOX and SEC 17a-4
+    retention and immutability requirements.
+  domain: core-banking
+  criticality: critical
+  architecture:
+    style: monolith
+    computePlatforms:
+      - ec2
+    databases:
+      - rds-postgresql
+    caches:
+      - elasticache-redis
+    messaging:
+      - sqs
+    storage:
+      - s3
+      - ebs
+    networking:
+      - alb
+      - transit-gateway
+    observability:
+      - cloudwatch
+      - splunk
+    deploymentModel: active-passive-multi-az
+    iac:
+      - terraform
+      - cloudformation
+
+aws:
+  accessMode: assume_role
+  payerAccountId: "500000000001"
+  organizationId: o-ashcroft01
+  cur:
+    bucket: ashcroft-cur-restricted
+    prefix: cloudoptix/ledger
+    region: us-east-1
+    reportName: ashcroft-cur-daily
+  accounts:
+    - id: "500000000010"
+      alias: ashcroft-prod
+      environment: production
+      regions: [us-east-1, us-east-2]
+      roleArn: arn:aws:iam::500000000010:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-3d7e91aa
+      production: true
+    - id: "500000000020"
+      alias: ashcroft-dr
+      environment: dr
+      regions: [us-west-2]
+      roleArn: arn:aws:iam::500000000020:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-3d7e91ab
+      production: true
+    - id: "500000000030"
+      alias: ashcroft-staging
+      environment: staging
+      regions: [us-east-1]
+      roleArn: arn:aws:iam::500000000030:role/cloudoptix-analyze
+      externalId: cloudoptix-ext-3d7e91ac
+      production: false
+
+workloads:
+  - name: ledger-core
+    type: service
+    platform: ec2
+    environment: production
+    criticality: critical
+    owner: core-banking@ashcroftcustodial.example
+    team: core-banking
+    dependsOn: [ledger-db]
+    slo:
+      availability: 0.9999
+      latencyP99Ms: 150
+      errorRateMax: 0.0001
+  - name: ledger-db
+    type: database
+    platform: rds-postgresql
+    environment: production
+    criticality: critical
+    owner: core-banking@ashcroftcustodial.example
+    team: core-banking
+    slo:
+      availability: 0.9999
+  - name: settlement-batch
+    type: batch
+    platform: ec2
+    environment: production
+    criticality: critical
+    owner: core-banking@ashcroftcustodial.example
+    team: core-banking
+    dependsOn: [ledger-db]
+  - name: statement-generator
+    type: batch
+    platform: ec2
+    environment: production
+    criticality: high
+    owner: reporting@ashcroftcustodial.example
+    team: reporting
+    dependsOn: [ledger-db]
+
+business:
+  transactions:
+    - name: trade-settlement
+      description: One settled trade instruction posted to the ledger.
+      monthlyVolume: 4200000
+      workloads: [settlement-batch, ledger-db]
+      targetCostPerUnit: 0.041
+      volumeMetric: settled_trades
+      critical: true
+    - name: statement-generation
+      description: One customer account statement rendered and archived.
+      monthlyVolume: 1900000
+      workloads: [statement-generator]
+      volumeMetric: statements_generated
+      critical: false
+  kpis:
+    - name: settlement-t-plus-1-rate
+      unit: percent
+      target: 99.98
+  customerCount: 890000
+  peakSeasons:
+    - quarter-end
+    - year-end
+  trafficProfile: "batch-dominated; sharp end-of-day and end-of-quarter peaks rather than continuous diurnal load"
+
+objectives:
+  costReductionTarget: 0.08
+  monthlyBudget: 410000
+  availabilityTarget: 0.9999
+  maxLatencyMs: 150
+  timeframe: "next fiscal year, reviewed quarterly with risk committee"
+  costSlos:
+    - name: settlement-cost-per-trade
+      kind: cost_per_transaction
+      scope: transaction
+      target: 0.041
+      transaction: trade-settlement
+      window: calendar_quarter
+      errorBudgetPct: 0.05
+      breachActions: [notify, open_investigation]
+    - name: ledger-absolute-spend
+      kind: absolute_spend
+      scope: application
+      target: 410000
+      window: calendar_month
+      errorBudgetPct: 0.03
+      breachActions: [notify, require_approval]
+
+optimization:
+  riskTolerance: low
+  preferences:
+    - prefer_reserved_over_spot_for_stateful
+  excludedActions:
+    - delete_snapshot
+    - terminate_instance
+    - stop_instance
+    - modify_security_group
+  excludedResources:
+    - ledger-db-primary
+    - ledger-db-standby
+    - settlement-batch-primary
+  excludedTags:
+    ashcroft.io/regulatory-hold: "true"
+  spotAllowed: false
+  commitmentAppetite: conservative
+  minSavingThreshold: 100
+
+automation:
+  enabled: false
+  environments: []
+  autoExecuteActions: []
+  maintenanceWindows:
+    - name: monthly-change-window
+      days: [sun]
+      startUtc: "03:00"
+      durationMinutes: 120
+      environments: [staging]
+  maxConcurrentChanges: 1
+  maxMonthlyImpact: 5000
+  validationWindowMinutes: 180
+  autoRollback: true
+
+governance:
+  productionChangesRequireApproval: true
+  minApprovals: 2
+  approverRoles: [tenant_admin, architect, auditor]
+  segregationOfDuties: true
+  changeManagementSystem: servicenow
+  changeFreezeWindows:
+    - quarter-end
+    - year-end
+    - regulatory-exam-period
+  policyPack: regulated
+
+security:
+  awsAccessMode: assume_role
+  complianceFrameworks:
+    - sox
+    - sec-17a-4
+    - soc2
+    - pci-dss
+  dataResidency: [us]
+  encryptionRequired: true
+  ssoProvider: okta
+  auditRetentionDays: 2555
+  piiHandling: encrypted-at-rest-restricted-access
+
+observability:
+  metricsSources: [cloudwatch, splunk]
+  prometheusEndpoint: https://prometheus.internal.ashcroftcustodial.example
+  tracingEnabled: false
+  logRetentionDays: 2555
+
+notifications:
+  channels:
+    - name: risk-committee-email
+      type: email
+      target: cloud-risk@ashcroftcustodial.example
+      severities: [high, critical]
+    - name: compliance-webhook
+      type: webhook
+      target: https://internal.ashcroftcustodial.example/hooks/cloudoptix-compliance
+      secretRef: notify/webhook/compliance-hmac
+      severities: [critical]
+  subscriptions:
+    cost_slo_breach: [risk-committee-email]
+    governance_denial: [compliance-webhook, risk-committee-email]
+    execution_rollback: [risk-committee-email]
+  quietHoursUtc: "none"
+
+teams:
+  - name: core-banking
+    contact: core-banking@ashcroftcustodial.example
+    owns: [ledger-core, ledger-db, settlement-batch]
+    members:
+      - email: harold.finch@ashcroftcustodial.example
+        name: Harold Finch
+        roles: [tenant_admin, architect]
+      - email: sunita.rao@ashcroftcustodial.example
+        name: Sunita Rao
+        roles: [developer]
+  - name: reporting
+    contact: reporting@ashcroftcustodial.example
+    owns: [statement-generator]
+    members:
+      - email: paul.igwe@ashcroftcustodial.example
+        name: Paul Igwe
+        roles: [developer]
+  - name: risk-and-compliance
+    contact: cloud-risk@ashcroftcustodial.example
+    owns: []
+    members:
+      - email: janet.corwin@ashcroftcustodial.example
+        name: Janet Corwin
+        roles: [auditor, viewer]

@@ -1,0 +1,95 @@
+{{/*
+The platform's own SLO alerts. Every expression references a metric from
+internal/infrastructure/telemetry/metrics.go by its exact name — see that
+file's doc comment for what each one means before changing a threshold
+here. Thresholds are values.yaml-configurable (prometheusRule.*Threshold)
+rather than hard-coded, so an environment composition can tune them without
+a chart change, but the rule *shapes* below are the same in every
+environment.
+*/}}
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "cloudoptix.fullname" . }}-slos
+  namespace: {{ .Values.prometheusRule.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "cloudoptix.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: cloudoptix.slos
+      rules:
+        - alert: CloudOptixAPIErrorRateHigh
+          expr: >
+            sum(rate(cloudoptix_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(cloudoptix_http_requests_total[5m])) > {{ .Values.prometheusRule.errorRateThreshold }}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CloudOptix API 5xx rate above {{ .Values.prometheusRule.errorRateThreshold }} for 5 minutes"
+            description: "Check the api Deployment's logs and internal/transport/http's error paths — a sustained 5xx rate this high usually traces back to a downstream dependency (database, Redis, an AWS credential broker failure), not the handler code itself."
+
+        - alert: CloudOptixAPILatencyP99High
+          expr: >
+            histogram_quantile(0.99, sum(rate(cloudoptix_http_request_duration_seconds_bucket[5m])) by (le))
+            > {{ .Values.prometheusRule.latencyP99ThresholdSeconds }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CloudOptix API p99 latency above {{ .Values.prometheusRule.latencyP99ThresholdSeconds }}s for 10 minutes"
+            description: "Cross-reference cloudoptix_aws_api_latency_seconds — a slow upstream AWS call inside a request path is a common cause here, distinct from the database-bound cloudoptix_http_request_duration_seconds regressions."
+
+        - alert: CloudOptixDiscoveryCoverageLow
+          expr: avg(cloudoptix_discovery_coverage_ratio) < {{ .Values.prometheusRule.discoveryCoverageThreshold }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Discovery is completing scans covering less than {{ .Values.prometheusRule.discoveryCoverageThreshold }} of expected services/regions"
+            description: "A tenant's onboarding role permissions (see terraform/modules/cloudoptix-onboarding-role) may have been narrowed, or a region is failing partway through — check the discovery worker's logs for the specific service/region that is warning or erroring out."
+
+        - alert: CloudOptixAWSAPIThrottlingElevated
+          expr: increase(cloudoptix_aws_api_throttles_total[15m]) > 50
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "AWS API throttling has increased sharply in the last 15 minutes"
+            description: "internal/infrastructure/config's aws.rate_limit_per_second exists specifically to keep discovery from becoming its own throttling source — a spike here usually means either that limit needs lowering for this tenant's account, or a customer is running other automation against the same account concurrently."
+
+        - alert: CloudOptixExecutionFailureRateHigh
+          expr: >
+            sum(rate(cloudoptix_execution_results_total{result="failure"}[30m]))
+            /
+            sum(rate(cloudoptix_execution_results_total[30m])) > 0.1
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "More than 10% of execution plan steps have failed over the last 30 minutes"
+            description: "Every failure here is a step that (per internal/adapters/aws/executor's rollback_feasible contract) either rolled back cleanly or is now in a state requiring manual review — check internal/domain/execute's plan status, not just this rate, before assuming rollback handled it."
+
+        - alert: CloudOptixWorkerQueueBacklogGrowing
+          expr: cloudoptix_worker_queue_depth > 1000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A worker queue has held over 1000 pending items for 10+ minutes"
+            description: "Check the matching HPA (kubectl get hpa) — if it is already at maxReplicas, the ceiling in values.yaml's components.<worker>.autoscaling.maxReplicas may need raising; if it isn't, the HPA itself may be misconfigured or blocked."
+
+        - alert: CloudOptixPodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}"}[15m]) > 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "A CloudOptix pod has restarted more than 3 times in 15 minutes"
+            description: "kubectl logs --previous on the affected pod is the first move — a crash loop this fast is almost always a startup-time failure (bad config, an unreachable dependency the startupProbe should have caught) rather than a runtime one."
+{{- end }}

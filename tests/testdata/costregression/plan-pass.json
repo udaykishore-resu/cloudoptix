@@ -1,0 +1,43 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "variables": {"environment": {"value": "production"}, "region": {"value": "us-east-1"}},
+  "resource_changes": [
+    {
+      "address": "module.checkout.aws_instance.api",
+      "module_address": "module.checkout",
+      "type": "aws_instance",
+      "name": "api",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "instance_type": "m5.2xlarge",
+          "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}
+        },
+        "after": {
+          "instance_type": "m5.large",
+          "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}
+        }
+      }
+    },
+    {
+      "address": "module.checkout.aws_ebs_volume.data",
+      "module_address": "module.checkout",
+      "type": "aws_ebs_volume",
+      "name": "data",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "type": "gp2", "size": 500,
+          "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}
+        },
+        "after": {
+          "type": "gp3", "size": 500, "iops": 3000, "throughput": 125,
+          "tags": {"Application": "checkout-api", "Team": "payments", "Environment": "production"}
+        }
+      }
+    }
+  ]
+}
