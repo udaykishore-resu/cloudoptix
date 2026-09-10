@@ -84,8 +84,8 @@ variable "spot_instance_types" {
     (internal/adapters/aws/executor's action of the same name) tells
     customers to do with equivalent workloads in their own accounts.
   EOT
-  type = list(string)
-  default = ["m6i.large", "m6a.large", "m5.large", "m5a.large"]
+  type        = list(string)
+  default     = ["m6i.large", "m6a.large", "m5.large", "m5a.large"]
 }
 
 variable "spot_min_size" {
@@ -124,8 +124,8 @@ variable "autoscaler" {
     ever scales the exact managed node groups this module already defines,
     which is easier to reason about for a first production rollout.
   EOT
-  type = string
-  default = "karpenter"
+  type        = string
+  default     = "karpenter"
   validation {
     condition     = contains(["karpenter", "cluster-autoscaler", "none"], var.autoscaler)
     error_message = "autoscaler must be karpenter, cluster-autoscaler, or none."

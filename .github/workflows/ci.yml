@@ -14,7 +14,9 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.25"
+  # Go comes from go.mod (setup-go's go-version-file honours its toolchain
+  # directive), so the toolchain is declared once and CI, the Dockerfile
+  # and a developer's `go` agree on it.
   NODE_VERSION: "20"
   TERRAFORM_VERSION: "1.9.8"
   HELM_VERSION: "3.16.4"
@@ -27,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
       - name: go build
         run: go build ./...
@@ -49,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
       - name: gofmt -l (fails if any file is unformatted)
         run: |
@@ -69,12 +71,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
       - name: install staticcheck
         id: install
         continue-on-error: true
-        run: go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1 # supports the Go 1.26 toolchain go.mod pins; 2024.1.1 predates it
       - name: run staticcheck
         if: steps.install.outcome == 'success'
         run: staticcheck ./...
@@ -111,7 +113,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
       - name: go test (race, coverage)
         env:
@@ -147,7 +149,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
       - name: internal/domain and internal/application must not import internal/adapters
         run: |

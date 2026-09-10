@@ -602,15 +602,22 @@ For the two largest waste categories in this same estate — where the savings a
 
 ## Quick start
 
-**There is currently no `cmd/` entrypoint in this repository — no `main.go` assembles `ports.Services` and mounts `internal/transport/http`'s router into a runnable binary.** Every piece needed to build one exists and is independently tested (`internal/adapters/memstore`, `internal/adapters/awssim`, `internal/adapters/llm/deterministic`, `internal/adapters/events.InProcess`, `internal/transport/http.NewRouter`, `internal/infrastructure/server.New`), but nothing wires them together into a process yet. This is stated explicitly in [Current limitations](#current-limitations-and-what-production-hardening-would-still-require) rather than glossed over. What follows is how the zero-infrastructure and full-stack configurations *would* be assembled from the pieces that exist today.
+The composition root is `internal/app` (`app.Build` turns a `config.Config` into adapters, services, router and workers) and three `main` packages sit on top of it: `cmd/cloudoptix-api` (the HTTP API; `--seed-demo` seeds the demo tenant, `--migrate-only` applies migrations and exits), `cmd/cloudoptix-worker` (the background cycles, `--workers=...`, `--once`) and `cmd/coptx` (the CLI: `spec`, `cost`, `policy`, `demo`, `version`). With nothing configured, all three run the zero-infrastructure path:
+
+```sh
+go run ./cmd/cloudoptix-api --seed-demo -auth-dev-static-token-enabled=true -auth-dev-static-token=dev-local-token-not-a-secret
+# or the whole stack: docker compose -f deployments/docker-compose.yml up --build
+```
+
+The snippet below is the shape of what `app.Build` does, reduced to the adapters it selects on that path.
 
 ### Zero infrastructure (in-memory store, simulated AWS, deterministic LLM)
 
 Every adapter needed to run the whole platform with no external dependency is already a first-class, independently tested implementation — not a mock (see [ADR-0007](docs/adr/0007-in-memory-adapters-as-first-class-runtime.md)):
 
 ```go
-// Illustrative — not a file in this repository. Composing this into
-// cmd/cloudoptix/main.go is exactly the gap Current Limitations describes.
+// Illustrative — the real wiring is internal/app.Build, used by every
+// binary under cmd/.
 package main
 
 import (
@@ -639,7 +646,7 @@ func main() {
 }
 ```
 
-Every adapter this snippet names is real and tested today: `go test ./internal/adapters/memstore/... ./internal/adapters/awssim/... ./internal/adapters/llm/deterministic/... ./internal/adapters/events/...`. The missing piece is `wireServices` — the application-layer composition root that constructs each of the fourteen `ports.Services` fields from these adapters. That is ordinary, mechanical Go code; it does not exist in this repository yet.
+Every adapter this snippet names is real and tested today: `go test ./internal/adapters/memstore/... ./internal/adapters/awssim/... ./internal/adapters/llm/deterministic/... ./internal/adapters/events/...`. `wireServices` is `internal/app`'s `buildServices`, which constructs each of the fourteen `ports.Services` fields from these adapters; `tests/e2e` drives the platform through that same `app.Build`.
 
 ### Full stack
 
@@ -683,7 +690,7 @@ terraform/, helm/, deployments/  Scaffolding (a network module's variables.tf, a
 
 This section exists because an honest limitations list is worth more than a paragraph of claims, per this documentation effort's own ground rules. In rough order of how much it matters to someone deciding whether to trust this system with a production IAM role:
 
-- **There is no runnable entrypoint.** No `cmd/main.go` exists anywhere in the repository. Every adapter and application service is built and independently tested, but nothing composes `ports.Services` from them and mounts the router into a process. This is the single largest gap between "the code that exists" and "a running platform," and the [Quick start](#quick-start) section above states it rather than hides it.
+- **The entrypoints are new and have run only against the simulated estate.** `cmd/cloudoptix-api`, `cmd/cloudoptix-worker` and `cmd/coptx` compose the platform through `internal/app`; the Postgres/Redis path they take in `deployments/docker-compose.yml` is exercised by CI's E2E workflow, but no deployment of these binaries has run against a real AWS account (see the next point).
 - **`policies/README.md` documents a bug that is no longer present in the code**, and had not been updated to reflect the fix at the time this document was written (see [The AI safety model](#the-ai-safety-model)). This is exactly the kind of drift between a comment and the code it describes that a reviewer should assume is possible anywhere in a large codebase and verify independently, not take on faith — including from this README.
 - **Never run against a real AWS account.** Every discovery, cost-ingestion, metrics and execution code path has been exercised only against `internal/adapters/awssim`'s deterministic simulator, never a live account. The simulator is built to match the real ports' contracts in every way its own package doc claims matter (real pricing math, real attachment/topology state, real reversible mutation), but "built to match" and "verified against the genuine article" are different claims, and only the second is true of the real AWS adapters (`internal/adapters/aws/*`) as of this writing.
 - **`terraform/`, `helm/`, and `deployments/`** contain a network module's `variables.tf`/`versions.tf` (no resource definitions), a Helm chart directory skeleton, and empty `k8s`/`argocd`/`docker` directories. None of these produce a deployable artifact today.

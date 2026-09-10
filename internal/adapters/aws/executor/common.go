@@ -466,28 +466,6 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	return int(f), true
 }
 
-// paramBool reads a boolean parameter, accepting a real bool or the strings
-// "true"/"false" (a recommendation's Parameters map is JSON in transit, and
-// some callers round-trip a bool as its string form).
-func paramBool(params map[string]any, key string) (bool, bool) {
-	v, ok := params[key]
-	if !ok {
-		return false, false
-	}
-	switch b := v.(type) {
-	case bool:
-		return b, true
-	case string:
-		switch b {
-		case "true":
-			return true, true
-		case "false":
-			return false, true
-		}
-	}
-	return false, false
-}
-
 // ctxWithTimeout bounds one blocking AWS call or waiter. A single Apply call
 // must never hang the whole execution engine waiting on one stuck resource.
 func ctxWithTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {

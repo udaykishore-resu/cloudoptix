@@ -40,12 +40,12 @@ variable "service_accounts" {
   EOT
   type        = map(string)
   default = {
-    api                  = "cloudoptix-api"
-    worker_discovery     = "cloudoptix-worker-discovery"
-    worker_optimization  = "cloudoptix-worker-optimization"
-    worker_automation    = "cloudoptix-worker-automation"
-    worker_validation    = "cloudoptix-worker-validation"
-    worker_notification  = "cloudoptix-worker-notification"
+    api                 = "cloudoptix-api"
+    worker_discovery    = "cloudoptix-worker-discovery"
+    worker_optimization = "cloudoptix-worker-optimization"
+    worker_automation   = "cloudoptix-worker-automation"
+    worker_validation   = "cloudoptix-worker-validation"
+    worker_notification = "cloudoptix-worker-notification"
   }
 }
 
@@ -58,8 +58,8 @@ variable "customer_role_arn_pattern" {
     CloudOptix pod identity still cannot assume an unrelated role a customer
     happens to also trust the account for.
   EOT
-  type    = string
-  default = "arn:aws:iam::*:role/CloudOptix-*"
+  type        = string
+  default     = "arn:aws:iam::*:role/CloudOptix-*"
 }
 
 variable "secrets" {
@@ -71,7 +71,7 @@ variable "secrets" {
     plan, state diff, or this repository. See the README for why the resource
     uses lifecycle.ignore_changes on secret_string.
   EOT
-  type    = list(string)
+  type        = list(string)
   default = [
     "database-password",
     "redis-password",

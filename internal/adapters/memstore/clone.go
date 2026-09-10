@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/udaykishore-resu/cloudoptix/internal/ports"
 )
@@ -107,11 +106,4 @@ func paginate[T any](items []T, opts ports.ListOptions, keyOf func(T) (string, s
 		page.NextCursor = encodeCursor(lastK, lastID)
 	}
 	return page
-}
-
-// sortStrings is a tiny helper used by the several "list distinct keys sorted"
-// spots across the aggregation code.
-func sortStrings(ss []string) []string {
-	sort.Strings(ss)
-	return ss
 }

@@ -10,14 +10,6 @@ import (
 	"github.com/udaykishore-resu/cloudoptix/internal/ports"
 )
 
-func sumCost(resources []cloud.Resource) core.Money {
-	total := core.ZeroUSD()
-	for _, r := range resources {
-		total = total.MustAdd(r.MonthlyCost)
-	}
-	return total
-}
-
 func monthlyFromHourly(hourly core.Money) core.Money { return hourly.Scale(core.HoursPerMonth) }
 
 func units(r cloud.Resource) float64 {

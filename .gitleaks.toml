@@ -1,0 +1,24 @@
+# gitleaks configuration — read by gitleaks/gitleaks-action in
+# .github/workflows/security.yaml and by a local `gitleaks git .`.
+#
+# The default ruleset stays in force; the allowlist below names the three
+# strings in this repository that trip the generic detectors and are not
+# credentials: the dev-only static bearer token deployments/docker-compose*.yml
+# documents (dev_static_token_enabled is refused in production by
+# config.Config.Validate), and two test fixtures that exist precisely to
+# prove the log redactor and the Secrets Manager discoverer handle
+# secret-shaped values. Matching the literal strings rather than the files
+# keeps a real key pasted into one of those files detectable.
+title = "cloudoptix"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "documented dev-only token and secret-shaped test fixtures"
+regexTarget = "match"
+regexes = [
+  '''dev-local-token-not-a-secret''',
+  '''sk-abcdef1234567890''',
+  '''stale-secret-Ab12Cd''',
+]

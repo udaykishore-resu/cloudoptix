@@ -58,8 +58,8 @@ variable "serverless" {
     itself exactly the kind of rightsizing judgment call CloudOptix's own
     product exists to help a customer make about their own Aurora clusters.
   EOT
-  type = bool
-  default = true
+  type        = bool
+  default     = true
 }
 
 variable "serverless_min_acu" {

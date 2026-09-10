@@ -33,7 +33,6 @@ type Session struct {
 	base        aws.Config
 	credentials aws.CredentialsProvider
 	expiresAt   time.Time
-	assumedARN  string
 }
 
 var _ ports.AWSSession = (*Session)(nil)

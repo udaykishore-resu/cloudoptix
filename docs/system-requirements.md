@@ -4,7 +4,7 @@ This document covers the non-functional and platform-level requirements that sit
 
 ## Runtime environment
 
-- **Language and module.** Go 1.24 (`go.mod`), module `github.com/udaykishore-resu/cloudoptix`.
+- **Language and module.** Go 1.26 (`go.mod`), module `github.com/udaykishore-resu/cloudoptix`.
 - **Deployment shape.** A modular monolith exposing one HTTP API, plus a small number of background workers consuming the same event bus — see [`architecture.md`](architecture.md) and [ADR-0001](adr/0001-modular-monolith.md) for why this was chosen over microservices.
 - **No compiled entrypoint exists yet.** There is no `cmd/` directory or `main.go` anywhere in this repository. This is the platform's single largest gap between "implemented" and "running" — see the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require).
 

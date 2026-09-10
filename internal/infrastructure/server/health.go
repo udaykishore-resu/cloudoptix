@@ -50,7 +50,6 @@ type Health struct {
 	// Readiness checks are everything a request actually needs to succeed.
 	readiness []NamedCheck
 
-	mu          sync.RWMutex
 	startedAt   time.Time
 	version     string
 	serviceName string

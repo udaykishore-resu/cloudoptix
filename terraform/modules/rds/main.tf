@@ -48,13 +48,13 @@ resource "aws_security_group" "rds" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rds_from_app" {
-  for_each                    = toset(var.allowed_security_group_ids)
-  security_group_id           = aws_security_group.rds.id
+  for_each                     = toset(var.allowed_security_group_ids)
+  security_group_id            = aws_security_group.rds.id
   referenced_security_group_id = each.value
-  from_port                   = 5432
-  to_port                     = 5432
-  ip_protocol                 = "tcp"
-  description                 = "Postgres from CloudOptix workloads"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  description                  = "Postgres from CloudOptix workloads"
 }
 
 # Enhanced Monitoring's IAM role, only created when monitoring is on — an
@@ -87,13 +87,13 @@ resource "aws_iam_role_policy_attachment" "monitoring" {
 # via the ExternalSecrets sync documented in this module's README, not via
 # anything this module outputs directly.
 resource "aws_rds_cluster" "this" {
-  cluster_identifier     = var.name
-  engine                 = "aurora-postgresql"
-  engine_version         = var.engine_version
-  engine_mode            = "provisioned" # required value even for Serverless v2; capacity comes from serverlessv2_scaling_configuration below
-  database_name          = var.database_name
-  master_username        = var.master_username
-  manage_master_user_password = true
+  cluster_identifier            = var.name
+  engine                        = "aurora-postgresql"
+  engine_version                = var.engine_version
+  engine_mode                   = "provisioned" # required value even for Serverless v2; capacity comes from serverlessv2_scaling_configuration below
+  database_name                 = var.database_name
+  master_username               = var.master_username
+  manage_master_user_password   = true
   master_user_secret_kms_key_id = var.kms_key_arn
 
   db_subnet_group_name            = aws_db_subnet_group.this.name
@@ -103,12 +103,12 @@ resource "aws_rds_cluster" "this" {
   storage_encrypted = true
   kms_key_id        = var.kms_key_arn
 
-  backup_retention_period = var.backup_retention_days
-  preferred_backup_window = var.backup_window
+  backup_retention_period      = var.backup_retention_days
+  preferred_backup_window      = var.backup_window
   preferred_maintenance_window = var.maintenance_window
 
-  deletion_protection      = var.deletion_protection
-  skip_final_snapshot      = var.skip_final_snapshot
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = var.skip_final_snapshot
   final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 
   copy_tags_to_snapshot = true

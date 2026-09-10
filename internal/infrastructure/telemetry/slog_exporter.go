@@ -74,7 +74,7 @@ func (e *SlogExporter) logSpan(s sdktrace.ReadOnlySpan) {
 		attrs = append(attrs, slog.String("status_message", s.Status().Description))
 	}
 	for _, kv := range s.Attributes() {
-		attrs = append(attrs, slog.String("attr."+string(kv.Key), kv.Value.Emit()))
+		attrs = append(attrs, slog.String("attr."+string(kv.Key), kv.Value.String()))
 	}
 	for _, ev := range s.Events() {
 		attrs = append(attrs, slog.String("event", ev.Name))

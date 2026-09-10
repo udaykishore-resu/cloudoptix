@@ -104,6 +104,12 @@ func (s *Service) Decide(ctx context.Context, tenant core.TenantID, id core.ID, 
 		return govern.Request{}, err
 	}
 
+	if resp.At.IsZero() {
+		// The decision time comes from the service's clock, not the wall
+		// clock inside govern.Request.Decide, so that expiry is judged
+		// against the same clock that set ExpiresAt.
+		resp.At = s.d.Clock.Now()
+	}
 	decideErr := req.Decide(resp)
 	// req.Decide mutates req.State to ApprovalExpired even when it returns an
 	// error for that case, so the expiry must still be persisted — otherwise

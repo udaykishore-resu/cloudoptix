@@ -22,16 +22,6 @@ func seedTransaction(t *testing.T, repos ports.Repositories, tenant core.TenantI
 	return tx
 }
 
-func tagResourceWorkload(t *testing.T, repos ports.Repositories, tenant core.TenantID, resourceID, workloadID core.ID) {
-	t.Helper()
-	ctx := ctxFor(tenant)
-	res, err := repos.Resources.Get(ctx, tenant, resourceID)
-	require.NoError(t, err)
-	res.WorkloadID = workloadID
-	_, err = repos.Resources.UpsertBatch(ctx, tenant, []cloud.Resource{res})
-	require.NoError(t, err)
-}
-
 // singleResourceTransactionFixture builds the minimal graph a unit-economics
 // test needs: one application, one workload, one resource with no topology
 // edges at all — so a transaction's footprint total is exactly that

@@ -53,20 +53,20 @@ module "security" {
 module "rds" {
   source = "../../modules/rds"
 
-  name                        = var.name
-  environment                 = "development"
-  vpc_id                      = module.network.vpc_id
-  database_subnet_ids         = module.network.database_subnet_ids
-  allowed_security_group_ids  = [module.eks.node_security_group_id]
-  kms_key_arn                 = module.security.app_kms_key_arn
+  name                       = var.name
+  environment                = "development"
+  vpc_id                     = module.network.vpc_id
+  database_subnet_ids        = module.network.database_subnet_ids
+  allowed_security_group_ids = [module.eks.node_security_group_id]
+  kms_key_arn                = module.security.app_kms_key_arn
 
   serverless         = true
   serverless_min_acu = 0.5
   serverless_max_acu = 2
   instance_count     = 1 # dev tolerates a single-instance cluster with no reader; production does not — see that environment
 
-  deletion_protection = false
-  skip_final_snapshot = true
+  deletion_protection   = false
+  skip_final_snapshot   = true
   backup_retention_days = 3
 
   tags = local.tags
@@ -75,13 +75,13 @@ module "rds" {
 module "redis" {
   source = "../../modules/redis"
 
-  name                        = var.name
-  environment                 = "development"
-  vpc_id                      = module.network.vpc_id
-  database_subnet_ids         = module.network.database_subnet_ids
-  allowed_security_group_ids  = [module.eks.node_security_group_id]
-  kms_key_arn                 = module.security.app_kms_key_arn
-  secret_arn                  = module.security.secret_arns["redis-password"]
+  name                       = var.name
+  environment                = "development"
+  vpc_id                     = module.network.vpc_id
+  database_subnet_ids        = module.network.database_subnet_ids
+  allowed_security_group_ids = [module.eks.node_security_group_id]
+  kms_key_arn                = module.security.app_kms_key_arn
+  secret_arn                 = module.security.secret_arns["redis-password"]
 
   node_type                  = "cache.t4g.small"
   num_cache_clusters         = 1
@@ -125,14 +125,14 @@ module "observability" {
   name        = var.name
   environment = "development"
 
-  alarm_sns_topic_arns        = [module.messaging.topic_arns["operational-alerts"]]
-  rds_cluster_identifier      = var.name # matches rds module's cluster_identifier = var.name
-  redis_replication_group_id = var.name  # matches redis module's replication_group_id = var.name
-  eks_cluster_name            = module.eks.cluster_name
-  sqs_dlq_names               = { for k, v in module.messaging.dlq_arns : k => "${var.name}-${k}-dlq" }
+  alarm_sns_topic_arns       = [module.messaging.topic_arns["operational-alerts"]]
+  rds_cluster_identifier     = var.name # matches rds module's cluster_identifier = var.name
+  redis_replication_group_id = var.name # matches redis module's replication_group_id = var.name
+  eks_cluster_name           = module.eks.cluster_name
+  sqs_dlq_names              = { for k, v in module.messaging.dlq_arns : k => "${var.name}-${k}-dlq" }
 
   log_retention_days = 14 # short in dev — see the demo estate for what NOT setting this looks like
-  tags                = local.tags
+  tags               = local.tags
 
   depends_on = [module.rds, module.redis, module.messaging, module.eks]
 }

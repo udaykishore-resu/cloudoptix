@@ -209,19 +209,19 @@ func buildRouter(ctx context.Context, cfg *config.Config, app *App, logger *slog
 	}
 
 	deps := transporthttp.Deps{
-		Services:       app.Services,
-		Auth:           authenticator,
-		Metrics:        app.Metrics,
-		Logger:         logger,
-		Idempotency:    transporthttp.NewMemoryIdempotencyStore(24 * time.Hour),
-		RateLimiter:    limiter,
-		MaxBodyBytes:   cfg.Server.MaxRequestBytes,
-		RequestTimeout: cfg.Server.RequestTimeout,
-		CORSOrigins:    cfg.Server.CORSAllowedOrigins,
+		Services:           app.Services,
+		Auth:               authenticator,
+		Metrics:            app.Metrics,
+		Logger:             logger,
+		Idempotency:        transporthttp.NewMemoryIdempotencyStore(24 * time.Hour),
+		RateLimiter:        limiter,
+		MaxBodyBytes:       cfg.Server.MaxRequestBytes,
+		RequestTimeout:     cfg.Server.RequestTimeout,
+		CORSOrigins:        cfg.Server.CORSAllowedOrigins,
 		TrustedProxyHeader: cfg.Server.TrustedProxyHeader,
 		TrustedProxies:     trustedProxies,
-		AuditEnabled:   true,
-		OpenAPISpec:    loadOpenAPISpec(logger),
+		AuditEnabled:       true,
+		OpenAPISpec:        loadOpenAPISpec(logger),
 	}
 	return transporthttp.NewRouter(deps, app.Health), nil
 }

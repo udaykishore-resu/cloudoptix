@@ -100,16 +100,10 @@ func argInt(args map[string]any, key string, def int) int {
 	return int(argFloat(args, key, float64(def)))
 }
 
-// defaultPeriod is the trailing-30-day window every cost-related tool falls
-// back to when the caller (model or human) did not specify one — the same
-// default a cost dashboard's landing view uses.
-func defaultPeriod() core.Period {
-	return core.PeriodOfDays(time.Now().UTC(), 30)
-}
-
 // periodFromArgs reads an optional "days" tool argument and returns the
-// corresponding trailing window, falling back to defaultPeriod when absent
-// or non-positive.
+// corresponding trailing window, falling back to the trailing 30 days —
+// the same default a cost dashboard's landing view uses — when absent or
+// non-positive.
 func periodFromArgs(args map[string]any) core.Period {
 	days := argFloat(args, "days", 30)
 	if days <= 0 {

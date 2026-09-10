@@ -36,8 +36,8 @@ variable "audit_object_lock_retention_days" {
     admin credential is compromised" from the set of ways this bucket's
     retention guarantee can fail.
   EOT
-  type = number
-  default = 2557
+  type        = number
+  default     = 2557
 }
 
 variable "cur_lifecycle_transition_days" {

@@ -11,8 +11,13 @@ terraform {
       version = ">= 3.6.0"
     }
     helm = {
-      source  = "hashicorp/helm"
-      version = ">= 2.13.0"
+      source = "hashicorp/helm"
+      # < 3.0.0: the helm provider's 3.0 release turned the `kubernetes {}`
+      # provider block and every `set {}` block on helm_release into
+      # attributes. This configuration is written for the 2.x block syntax,
+      # and an open upper bound let `terraform init` pick 3.x, which fails
+      # validate.
+      version = ">= 2.13.0, < 3.0.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"

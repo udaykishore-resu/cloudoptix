@@ -4,8 +4,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/udaykishore-resu/cloudoptix/internal/domain/core"
 )
 
 // Small, generic helpers shared across rule files. Nothing here is
@@ -20,8 +18,6 @@ func indexOfFold(list []string, want string) int {
 	}
 	return -1
 }
-
-func containsFold(list []string, want string) bool { return indexOfFold(list, want) >= 0 }
 
 func parseFloatAttr(v string, def float64) float64 {
 	if v == "" {
@@ -104,14 +100,4 @@ func stepDBClass(class string, larger bool) (string, bool) {
 		return "", false
 	}
 	return prefix + "." + dbSizeLadder[pos-1], true
-}
-
-// moneyOrZero converts a lookup's (core.Money, bool) into a plain core.Money,
-// used at call sites that already handle the bool separately and just want
-// the value.
-func moneyOrZero(m core.Money, ok bool) core.Money {
-	if !ok {
-		return core.ZeroUSD()
-	}
-	return m
 }

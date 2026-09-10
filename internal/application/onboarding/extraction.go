@@ -404,7 +404,7 @@ func runInference(draft *spec.Spec) {
 		// field becomes UNKNOWN, not a guessed default.
 	}
 
-	if hasProductionAccount(*draft) && draft.Governance.ProductionChangesRequireApproval == false &&
+	if hasProductionAccount(*draft) && !draft.Governance.ProductionChangesRequireApproval &&
 		draft.Provenance["governance.productionChangesRequireApproval"] != core.ProvenanceConfirmed {
 		draft.Governance.ProductionChangesRequireApproval = true
 		setProvenance(draft, "governance.productionChangesRequireApproval", core.ProvenanceInferred)

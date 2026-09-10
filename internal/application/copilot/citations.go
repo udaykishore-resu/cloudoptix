@@ -115,33 +115,12 @@ func asIdentifier(v any) (string, bool) {
 	switch id := v.(type) {
 	case string:
 		return id, true
-	case fmt.Stringer:
+	case fmt.Stringer: // core.ID, core.AccountID and the other named-string ID types
 		return id.String(), true
-	case core.ID:
-		return string(id), true
-	case core.AccountID:
-		return string(id), true
 	}
 	return "", false
 }
 
 func (g *groundingBuilder) addAmount(usd float64) {
 	g.set.Amounts = append(g.set.Amounts, core.USDollars(usd))
-}
-
-// citationSummary renders a short label for a Citation list, used in
-// degraded-mode answers that skip the model but still want to name what was
-// consulted.
-func citationSummary(cites []ports.Citation) string {
-	if len(cites) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("(%d source%s consulted)", len(cites), plural(len(cites)))
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
 }

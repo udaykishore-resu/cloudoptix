@@ -76,11 +76,25 @@ func (k jsonWebKey) publicKey() (crypto.PublicKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("auth: jwk %s: decoding y: %w", k.Kid, err)
 		}
-		return &ecdsa.PublicKey{
-			Curve: curve,
-			X:     new(big.Int).SetBytes(xBytes),
-			Y:     new(big.Int).SetBytes(yBytes),
-		}, nil
+		// RFC 7518 §6.2.1 requires x and y to be the curve's full field
+		// size; pad defensively so a provider that strips a leading zero
+		// still parses. ParseUncompressedPublicKey validates the point is
+		// on the curve, which setting X/Y directly never did.
+		size := (curve.Params().BitSize + 7) / 8
+		if len(xBytes) > size || len(yBytes) > size {
+			return nil, fmt.Errorf("auth: jwk %s: coordinate longer than the %s field size", k.Kid, k.Crv)
+		}
+		point := make([]byte, 0, 1+2*size)
+		point = append(point, 0x04)
+		point = append(point, make([]byte, size-len(xBytes))...)
+		point = append(point, xBytes...)
+		point = append(point, make([]byte, size-len(yBytes))...)
+		point = append(point, yBytes...)
+		pub, err := ecdsa.ParseUncompressedPublicKey(curve, point)
+		if err != nil {
+			return nil, fmt.Errorf("auth: jwk %s: invalid EC public key: %w", k.Kid, err)
+		}
+		return pub, nil
 	default:
 		return nil, fmt.Errorf("auth: jwk %s: unsupported key type %q", k.Kid, k.Kty)
 	}

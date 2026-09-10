@@ -131,13 +131,13 @@ func TestBuildResourceFilterTagKeyAndValue(t *testing.T) {
 // is treated as "not filtered" (IsZero), not as an actual empty-string
 // equality condition that would match nothing.
 func TestBuildResourceFilterApplicationAndWorkloadID(t *testing.T) {
-	where, args := buildResourceFilter(core.TenantID("t1"), ports.ResourceFilter{})
+	where, _ := buildResourceFilter(core.TenantID("t1"), ports.ResourceFilter{})
 	if strings.Contains(where, "application_id") || strings.Contains(where, "workload_id") {
 		t.Fatalf("expected no application/workload condition for zero IDs, got %q", where)
 	}
 
 	f := ports.ResourceFilter{ApplicationID: core.ID("app_123"), WorkloadID: core.ID("wl_456")}
-	where, args = buildResourceFilter(core.TenantID("t1"), f)
+	where, args := buildResourceFilter(core.TenantID("t1"), f)
 	if !strings.Contains(where, "application_id = $2") || !strings.Contains(where, "workload_id = $3") {
 		t.Fatalf("expected application_id = $2 and workload_id = $3, got %q", where)
 	}

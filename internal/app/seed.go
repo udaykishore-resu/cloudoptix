@@ -31,11 +31,12 @@ import (
 // caller-supplied tenant scope for exactly this case
 // (ports.StartOnboardingInput.ExistingTenant), so nothing here bypasses the
 // normal creation path to get a predictable id.
+const DemoTenantID core.TenantID = "shopfleet-demo"
+
 const (
-	DemoTenantID   core.TenantID = "shopfleet-demo"
-	DemoTenantSlug               = "shopfleet-demo"
-	DemoTenantName               = "ShopFleet"
-	demoActor                    = "demo@shopfleet.example"
+	DemoTenantSlug = "shopfleet-demo"
+	DemoTenantName = "ShopFleet"
+	demoActor      = "demo@shopfleet.example"
 )
 
 // demoConversation is the onboarding conversation the demo tenant is created

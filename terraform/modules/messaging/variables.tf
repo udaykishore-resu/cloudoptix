@@ -20,8 +20,8 @@ variable "queues" {
     RedrivePolicy for dead-lettering; it does not implement that logic
     itself (see that package's doc comment).
   EOT
-  type    = set(string)
-  default = ["discovery", "optimization", "automation", "validation", "notification"]
+  type        = set(string)
+  default     = ["discovery", "optimization", "automation", "validation", "notification"]
 }
 
 variable "max_receive_count" {

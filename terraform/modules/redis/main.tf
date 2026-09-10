@@ -20,13 +20,13 @@ resource "aws_security_group" "redis" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "redis_from_app" {
-  for_each                      = toset(var.allowed_security_group_ids)
-  security_group_id             = aws_security_group.redis.id
-  referenced_security_group_id  = each.value
-  from_port                     = 6379
-  to_port                       = 6379
-  ip_protocol                   = "tcp"
-  description                   = "Redis (TLS) from CloudOptix workloads"
+  for_each                     = toset(var.allowed_security_group_ids)
+  security_group_id            = aws_security_group.redis.id
+  referenced_security_group_id = each.value
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
+  description                  = "Redis (TLS) from CloudOptix workloads"
 }
 
 resource "aws_elasticache_parameter_group" "this" {
@@ -59,7 +59,7 @@ resource "aws_secretsmanager_secret_version" "redis_auth" {
 
 resource "aws_elasticache_replication_group" "this" {
   replication_group_id = var.name
-  description           = "CloudOptix shared cache / distributed lock backend."
+  description          = "CloudOptix shared cache / distributed lock backend."
 
   engine         = "redis"
   engine_version = var.engine_version

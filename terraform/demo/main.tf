@@ -59,7 +59,7 @@ resource "aws_security_group" "demo" {
 resource "aws_iam_role" "instance" {
   name = "${var.name}-instance"
   assume_role_policy = jsonencode({
-    Version = "2012-10-17"
+    Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
   })
 }
@@ -147,7 +147,7 @@ resource "aws_instance" "stopped" {
 
 resource "aws_ebs_volume" "unattached" {
   availability_zone = module.network.availability_zones[0]
-  size              = 20 # smallest size that still reads as a deliberate provision, not a rounding artifact
+  size              = 20    # smallest size that still reads as a deliberate provision, not a rounding artifact
   type              = "gp2" # gp2, not gp3, doubles as the gp2->gp3 pathology on top of being unattached
   tags              = { Name = "${var.name}-unattached", Pathology = "unattached-volume-and-gp2" }
 }
@@ -237,10 +237,10 @@ resource "aws_security_group" "rds" {
 }
 
 resource "aws_db_instance" "oversized_primary" {
-  identifier     = "${var.name}-primary"
-  engine         = "postgres"
-  engine_version = "16.4"
-  instance_class = "db.t3.medium"
+  identifier        = "${var.name}-primary"
+  engine            = "postgres"
+  engine_version    = "16.4"
+  instance_class    = "db.t3.medium"
   allocated_storage = 20
 
   db_name  = "demo"

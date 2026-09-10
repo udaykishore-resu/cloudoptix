@@ -170,8 +170,8 @@ resource "aws_cloudwatch_dashboard" "platform" {
       {
         type = "metric", x = 0, y = 0, width = 12, height = 6,
         properties = {
-          title = "API request rate & error rate"
-          view  = "timeSeries"
+          title  = "API request rate & error rate"
+          view   = "timeSeries"
           region = local.region
           metrics = [
             ["CloudOptix", "cloudoptix_http_requests_total", { stat = "Sum", label = "requests" }],
@@ -193,9 +193,9 @@ resource "aws_cloudwatch_dashboard" "platform" {
       {
         type = "metric", x = 0, y = 6, width = 8, height = 6,
         properties = {
-          title  = "Discovery coverage ratio"
-          view   = "timeSeries"
-          region = local.region
+          title   = "Discovery coverage ratio"
+          view    = "timeSeries"
+          region  = local.region
           metrics = [["CloudOptix", "cloudoptix_discovery_coverage_ratio", { stat = "Average" }]]
         }
       },
@@ -214,9 +214,9 @@ resource "aws_cloudwatch_dashboard" "platform" {
       {
         type = "metric", x = 16, y = 6, width = 8, height = 6,
         properties = {
-          title  = "LLM spend (USD)"
-          view   = "timeSeries"
-          region = local.region
+          title   = "LLM spend (USD)"
+          view    = "timeSeries"
+          region  = local.region
           metrics = [["CloudOptix", "cloudoptix_llm_cost_usd_total", { stat = "Sum" }]]
         }
       },
@@ -234,9 +234,9 @@ resource "aws_cloudwatch_dashboard" "platform" {
       {
         type = "metric", x = 12, y = 12, width = 12, height = 6,
         properties = {
-          title  = "Worker queue depth"
-          view   = "timeSeries"
-          region = local.region
+          title   = "Worker queue depth"
+          view    = "timeSeries"
+          region  = local.region
           metrics = [["CloudOptix", "cloudoptix_worker_queue_depth", { stat = "Maximum" }]]
         }
       },
@@ -269,23 +269,23 @@ resource "aws_ssm_parameter" "otel_collector_config" {
       prometheus = {
         config = {
           scrape_configs = [{
-            job_name        = "cloudoptix"
-            scrape_interval = "30s"
+            job_name              = "cloudoptix"
+            scrape_interval       = "30s"
             kubernetes_sd_configs = [{ role = "pod" }]
           }]
         }
       }
     }
     processors = {
-      batch = {}
+      batch             = {}
       resourcedetection = { detectors = ["env", "eks"] }
     }
     exporters = merge(
       {
         awsemf = {
-          namespace                  = "CloudOptix"
-          log_group_name             = aws_cloudwatch_log_group.application.name
-          dimension_rollup_option    = "NoDimensionRollup"
+          namespace               = "CloudOptix"
+          log_group_name          = aws_cloudwatch_log_group.application.name
+          dimension_rollup_option = "NoDimensionRollup"
         }
       },
       var.enable_xray ? { awsxray = {} } : {},

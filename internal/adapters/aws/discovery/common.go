@@ -172,14 +172,6 @@ func idPrefix(k cloud.Kind) string {
 	return "res"
 }
 
-// tagMap is the shape every AWS tag list boils down to before it reaches
-// core.Tags — a plain string map. Each service's own SDK tag type (ec2
-// types.Tag, rds types.Tag, dynamodb types.Tag, …) has the same two fields
-// under slightly different names, so each file converts its own tag slice
-// into this shape and hands it to core.Tags directly (core.Tags is itself
-// map[string]string).
-type tagMap = map[string]string
-
 // attrs builds a service-specific attribute map from alternating key/value
 // pairs, matching the convention internal/adapters/awssim/discover.go
 // established (attrs("multi_az", "true", "storage_type", "gp3")) so the two
@@ -199,8 +191,7 @@ func boolStr(v bool) string {
 	return "false"
 }
 
-func fstr(f float64) string { return fmt.Sprintf("%g", f) }
-func istr(i int64) string   { return fmt.Sprintf("%d", i) }
+func istr(i int64) string { return fmt.Sprintf("%d", i) }
 
 // wrap translates an AWS SDK error using awserr.Translate, recording a
 // throttle on the output before returning so the caller's APICalls/Throttled

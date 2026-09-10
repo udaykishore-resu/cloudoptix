@@ -17,13 +17,13 @@ module "network" {
 module "eks" {
   source = "../../modules/eks"
 
-  name                          = var.name
-  environment                   = "production"
-  vpc_id                        = module.network.vpc_id
-  private_subnet_ids            = module.network.private_subnet_ids
-  public_subnet_ids             = module.network.public_subnet_ids
-  endpoint_public_access        = false # production requires the private endpoint + VPN/Session Manager path — see the eks module's variable doc
-  endpoint_public_access_cidrs  = []
+  name                         = var.name
+  environment                  = "production"
+  vpc_id                       = module.network.vpc_id
+  private_subnet_ids           = module.network.private_subnet_ids
+  public_subnet_ids            = module.network.public_subnet_ids
+  endpoint_public_access       = false # production requires the private endpoint + VPN/Session Manager path — see the eks module's variable doc
+  endpoint_public_access_cidrs = []
 
   on_demand_instance_types = ["m6i.large", "m6i.xlarge"]
   on_demand_min_size       = 3
@@ -53,22 +53,22 @@ module "security" {
 module "rds" {
   source = "../../modules/rds"
 
-  name                        = var.name
-  environment                 = "production"
-  vpc_id                      = module.network.vpc_id
-  database_subnet_ids         = module.network.database_subnet_ids
-  allowed_security_group_ids  = [module.eks.node_security_group_id]
-  kms_key_arn                 = module.security.app_kms_key_arn
+  name                       = var.name
+  environment                = "production"
+  vpc_id                     = module.network.vpc_id
+  database_subnet_ids        = module.network.database_subnet_ids
+  allowed_security_group_ids = [module.eks.node_security_group_id]
+  kms_key_arn                = module.security.app_kms_key_arn
 
   # Serverless v2 remains the default even in production until sustained
   # load actually justifies a provisioned instance class — see the rds
   # module's README for why that is itself the rightsizing discipline this
   # platform's own product asks of customers. Flip serverless=false and set
   # provisioned_instance_class once real usage says so.
-  serverless          = true
-  serverless_min_acu  = 1
-  serverless_max_acu  = 16
-  instance_count      = 2
+  serverless         = true
+  serverless_min_acu = 1
+  serverless_max_acu = 16
+  instance_count     = 2
 
   deletion_protection         = true
   skip_final_snapshot         = false
@@ -81,13 +81,13 @@ module "rds" {
 module "redis" {
   source = "../../modules/redis"
 
-  name                        = var.name
-  environment                 = "production"
-  vpc_id                      = module.network.vpc_id
-  database_subnet_ids         = module.network.database_subnet_ids
-  allowed_security_group_ids  = [module.eks.node_security_group_id]
-  kms_key_arn                 = module.security.app_kms_key_arn
-  secret_arn                  = module.security.secret_arns["redis-password"]
+  name                       = var.name
+  environment                = "production"
+  vpc_id                     = module.network.vpc_id
+  database_subnet_ids        = module.network.database_subnet_ids
+  allowed_security_group_ids = [module.eks.node_security_group_id]
+  kms_key_arn                = module.security.app_kms_key_arn
+  secret_arn                 = module.security.secret_arns["redis-password"]
 
   node_type                  = "cache.r7g.large"
   num_cache_clusters         = 3
@@ -125,14 +125,14 @@ module "observability" {
   name        = var.name
   environment = "production"
 
-  alarm_sns_topic_arns        = [module.messaging.topic_arns["operational-alerts"]]
-  rds_cluster_identifier      = var.name
+  alarm_sns_topic_arns       = [module.messaging.topic_arns["operational-alerts"]]
+  rds_cluster_identifier     = var.name
   redis_replication_group_id = var.name
-  eks_cluster_name            = module.eks.cluster_name
-  sqs_dlq_names               = { for k, v in module.messaging.dlq_arns : k => "${var.name}-${k}-dlq" }
+  eks_cluster_name           = module.eks.cluster_name
+  sqs_dlq_names              = { for k, v in module.messaging.dlq_arns : k => "${var.name}-${k}-dlq" }
 
   log_retention_days = 90
-  tags                = local.tags
+  tags               = local.tags
 
   depends_on = [module.rds, module.redis, module.messaging, module.eks]
 }

@@ -109,11 +109,19 @@ type Response struct {
 // votes at most once, a rejection is immediately final, and the requester
 // cannot approve their own change when the policy demands a distinct
 // approver.
+//
+// resp.At is the moment of the decision and is what the request's expiry is
+// judged against; the caller stamps it from its clock (the governance
+// service uses the injected core.Clock, the HTTP handler the wall clock).
+// Left zero, it defaults to the wall clock here.
 func (r *Request) Decide(resp Response) error {
 	if r.State != ApprovalPending {
 		return core.Conflict("approval request %s is already %s", r.ID, r.State)
 	}
-	if time.Now().UTC().After(r.ExpiresAt) && !r.ExpiresAt.IsZero() {
+	if resp.At.IsZero() {
+		resp.At = time.Now().UTC()
+	}
+	if !r.ExpiresAt.IsZero() && resp.At.After(r.ExpiresAt) {
 		r.State = ApprovalExpired
 		return core.NewError(core.ErrPreconditionOff, "approval_expired",
 			"approval request %s expired at %s", r.ID, r.ExpiresAt.Format(time.RFC3339))
@@ -125,9 +133,6 @@ func (r *Request) Decide(resp Response) error {
 	}
 	if r.RequireDistinctApprover && resp.Principal == r.RequestedBy && resp.Approved {
 		return core.Forbidden("segregation of duties: %s requested this change and may not approve it", resp.Principal)
-	}
-	if resp.At.IsZero() {
-		resp.At = time.Now().UTC()
 	}
 	r.Responses = append(r.Responses, resp)
 

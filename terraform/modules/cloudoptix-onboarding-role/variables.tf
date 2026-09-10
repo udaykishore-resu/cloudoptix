@@ -7,7 +7,7 @@ variable "tenant_slug" {
     several customers under one AWS Organization), each gets distinguishable
     roles in this account's IAM console and CloudTrail.
   EOT
-  type = string
+  type        = string
   validation {
     condition     = can(regex("^[a-zA-Z0-9-]{1,32}$", var.tenant_slug))
     error_message = "tenant_slug must be 1-32 characters, alphanumeric and hyphens only (it becomes part of an IAM role name)."
@@ -25,8 +25,8 @@ variable "external_id" {
     — do not accept a role-assumption request that omits it, and never reuse
     an external ID CloudOptix did not generate for you specifically.
   EOT
-  type      = string
-  sensitive = true
+  type        = string
+  sensitive   = true
   validation {
     condition     = length(var.external_id) >= 8
     error_message = "external_id looks too short to be a real CloudOptix-issued value — re-copy it from the onboarding screen."
@@ -44,7 +44,7 @@ variable "cloudoptix_principal_arn" {
     tighter trust boundary, since trusting a specific role is always
     stronger than trusting the whole account root.
   EOT
-  type = string
+  type        = string
   validation {
     condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::\\d{12}:(root|role/.+)$", var.cloudoptix_principal_arn))
     error_message = "cloudoptix_principal_arn must be an IAM root or role ARN, e.g. arn:aws:iam::123456789012:root."
@@ -66,8 +66,8 @@ variable "enabled_scopes" {
     fails at the AWS API call, not at CloudOptix's own policy check —
     defense in depth.
   EOT
-  type    = set(string)
-  default = ["read", "analyze", "plan", "execute"]
+  type        = set(string)
+  default     = ["read", "analyze", "plan", "execute"]
   validation {
     condition     = alltrue([for s in var.enabled_scopes : contains(["read", "analyze", "plan", "execute"], s)])
     error_message = "enabled_scopes entries must be one of: read, analyze, plan, execute."

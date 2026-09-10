@@ -6,7 +6,7 @@ economic SLOs, an architecture simulator, an infra-change cost compiler, cost
 regression testing, an AI cost copilot, and policy-gated automation —
 backed by the Go API in `../` (see `../api/openapi.yaml`).
 
-Built with Next.js 14 (App Router) + TypeScript (strict) + Tailwind CSS +
+Built with Next.js 15 (App Router) + TypeScript (strict) + Tailwind CSS +
 shadcn/ui + TanStack Query + Recharts + React Flow.
 
 ## Getting started

@@ -26,17 +26,6 @@ var stageOrder = []string{
 	StageBusiness, StageObjectives, StageGovernance, StageReview,
 }
 
-// nextStage returns the stage after s, or StageReview if s is the last one
-// or unrecognised.
-func nextStage(s string) string {
-	for i, name := range stageOrder {
-		if name == s && i+1 < len(stageOrder) {
-			return stageOrder[i+1]
-		}
-	}
-	return StageReview
-}
-
 // stageField is one question the agent may ask during a stage: which
 // specification path it fills, the question text, whether an unanswered
 // value blocks review, and how to tell the value is already known from the

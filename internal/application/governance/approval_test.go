@@ -121,14 +121,13 @@ func TestDecide_ExpiredRequestFailsClosed(t *testing.T) {
 	svc, repos := newTestService(t)
 	seedSpec(t, repos, testTenant, testSpec(true))
 
-	// govern.Request.Decide checks expiry against the real wall clock (it
-	// takes no injected time), so ExpiresAt must be in the past relative to
-	// time.Now(), not this test's fixed testNow.
+	// Expiry is judged against the service's injected clock (Service.Decide
+	// stamps the decision time from it), so "overdue" is relative to testNow.
 	r := mkApprovalRequest(testTenant, "dev@example.com", 1, false)
 	r.ID = core.NewID("apr")
 	r.State = govern.ApprovalPending
-	r.RequestedAt = time.Now().UTC().Add(-2 * time.Hour)
-	r.ExpiresAt = time.Now().UTC().Add(-time.Hour) // already overdue
+	r.RequestedAt = testNow.Add(-2 * time.Hour)
+	r.ExpiresAt = testNow.Add(-time.Hour) // already overdue
 	require.NoError(t, repos.Approvals.Create(ctxFor(testTenant), r))
 
 	_, err := svc.Decide(ctxFor(testTenant), testTenant, r.ID, govern.Response{Principal: "sre-1@example.com", Approved: true})
