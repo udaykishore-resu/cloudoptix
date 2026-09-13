@@ -83,6 +83,12 @@ jobs:
             .
       - name: trivy scan
         uses: aquasecurity/trivy-action@v0.33.1
+        env:
+          # ghcr.io rate-limits anonymous vulnerability-DB pulls (TOOMANYREQUESTS),
+          # which aborts the scan before any SARIF is written; fall back to the
+          # public ECR mirror before giving up.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1
         with:
           image-ref: cloudoptix-${{ matrix.target.name }}:scan
           format: sarif
@@ -91,7 +97,11 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
       - name: upload SARIF
-        if: always()
+        # always(): findings must reach Code scanning even when the scan step
+        # fails on them; the hashFiles guard skips the upload when the scan
+        # aborted before writing a report (which would otherwise mask the real
+        # error with "Path does not exist").
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.target.name)) != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-${{ matrix.target.name }}.sarif

@@ -33,6 +33,22 @@ func (r *SpecRepository) SaveDraft(ctx context.Context, v spec.Version) error {
 		`, string(v.SpecID), string(v.TenantID)); err != nil {
 			return mapErr(err)
 		}
+		// A zero Version means "the next one", exactly as in the memstore
+		// reference implementation: onboarding saves every draft with
+		// Version unset and relies on the repository to number it, and the
+		// number it gets is what tenants.active_spec_version records at
+		// approval — a version 0 there reads as "no approved specification"
+		// to tenancy.Tenant.CanConnectAWS. The UNIQUE (tenant_id, spec_id,
+		// version) constraint is the backstop if two drafts of one spec are
+		// ever numbered concurrently.
+		if v.Version == 0 {
+			if err := q.QueryRow(ctx, `
+				SELECT COALESCE(MAX(version), 0) + 1 FROM spec_versions
+				WHERE tenant_id = $1 AND spec_id = $2
+			`, string(v.TenantID), string(v.SpecID)).Scan(&v.Version); err != nil {
+				return mapErr(err)
+			}
+		}
 		_, err := q.Exec(ctx, `
 			INSERT INTO spec_versions (id, tenant_id, spec_id, version, status, spec_document, checksum,
 				parent_id, diff, validation, completeness, created_by, created_at, approved_by, approved_at,

@@ -98,9 +98,11 @@ func (s *Service) scanAccount(ctx context.Context, tenant core.TenantID, run *po
 
 	existing, _ := s.Repos.Resources.LoadInventory(ctx, tenant, ports.ResourceFilter{AccountIDs: []core.AccountID{account.AccountID}})
 	existingKeys := map[string]bool{}
+	existingIDs := map[string]core.ID{}
 	if existing != nil {
 		for _, r := range existing.All() {
 			existingKeys[r.Key()] = true
+			existingIDs[r.Key()] = r.ID
 		}
 	}
 
@@ -150,6 +152,35 @@ func (s *Service) scanAccount(ctx context.Context, tenant core.TenantID, run *po
 			discovered = append(discovered, res)
 		}
 		relsByRegion[region] = append(relsByRegion[region], jr.out.Relationships...)
+	}
+
+	// A discoverer mints a fresh id for every resource it reports and builds
+	// its relationships against those ids (see awssim's discoveryBuilder);
+	// the repository is what makes identity stable, by upserting on
+	// Resource.Key() and keeping the id it already holds. Reconcile here, so
+	// the relationships and metrics persisted below point at the ids the
+	// repository will actually keep — otherwise a re-scan of a known estate
+	// writes edges and metric rows against ids no resource row has, which
+	// the Postgres foreign keys refuse and the memstore silently orphans.
+	renamed := map[core.ID]core.ID{}
+	for i := range discovered {
+		if id, ok := existingIDs[discovered[i].Key()]; ok && id != discovered[i].ID {
+			renamed[discovered[i].ID] = id
+			discovered[i].ID = id
+		}
+	}
+	if len(renamed) > 0 {
+		for region := range relsByRegion {
+			rels := relsByRegion[region]
+			for i := range rels {
+				if id, ok := renamed[rels[i].FromID]; ok {
+					rels[i].FromID = id
+				}
+				if id, ok := renamed[rels[i].ToID]; ok {
+					rels[i].ToID = id
+				}
+			}
+		}
 	}
 
 	if attrCtx, aerr := s.loadAttributionContext(ctx, tenant, account); aerr == nil {

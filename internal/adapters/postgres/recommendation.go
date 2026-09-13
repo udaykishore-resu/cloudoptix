@@ -85,7 +85,7 @@ func (r *RecommendationRepository) SaveBatch(ctx context.Context, tenant core.Te
 					preferred_alternative_id)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
 					$23,$24,$25,$26,NULLIF($27,''),$28,$29,$30,NULLIF($31,''),$32,
-					(SELECT application_id FROM resources WHERE tenant_id = $2 AND id = $33),
+					COALESCE((SELECT application_id FROM resources WHERE tenant_id = $2 AND id = $33), ''),
 					$33,$34,$35,$36,$37,$37,$38,$39,$40,$41,$42)
 				ON CONFLICT (id) DO UPDATE SET
 					title = EXCLUDED.title, rationale = EXCLUDED.rationale, action = EXCLUDED.action,

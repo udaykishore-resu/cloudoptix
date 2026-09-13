@@ -96,7 +96,11 @@ jobs:
           "
 
           echo "== the OpenAPI document the image serves matches the running API =="
-          curl -fsS "${API_BASE}/openapi.yaml" | head -1 | grep -q '^openapi:'
+          # Download, then inspect: the document is well over the 64 KiB pipe
+          # buffer, so `curl | head -1` makes curl exit 23 (EPIPE) when head
+          # closes the pipe, and pipefail would fail the step on a healthy API.
+          curl -fsS "${API_BASE}/openapi.yaml" -o openapi.yaml
+          head -1 openapi.yaml | grep -q '^openapi:'
 
       - name: dump logs on failure
         if: failure()
