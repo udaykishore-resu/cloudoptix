@@ -2,9 +2,9 @@
 /bin/
 /dist/
 *.exe
-cloudoptix-api
-cloudoptix-worker
-coptx
+/cloudoptix-api
+/cloudoptix-worker
+/coptx
 
 # Go
 *.test

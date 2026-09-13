@@ -14,7 +14,10 @@ title = "cloudoptix"
 [extend]
 useDefault = true
 
-[[allowlists]]
+# Singular [allowlist] rather than [[allowlists]]: gitleaks/gitleaks-action@v2
+# pins gitleaks 8.24.3 unless GITLEAKS_VERSION is set, and that release
+# silently ignores the newer plural table.
+[allowlist]
 description = "documented dev-only token and secret-shaped test fixtures"
 regexTarget = "match"
 regexes = [
