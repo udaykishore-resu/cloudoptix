@@ -11,8 +11,7 @@ Two ConfigMaps, deliberately kept separate:
 
   - "-config-file" holds a full config.yaml, mounted as a volume at
     /etc/cloudoptix/config.yaml and loaded via the app's --config flag.
-    It exists because several Config fields (database.ssl_mode,
-    database.max_open_conns, redis.tls_enabled, telemetry.metrics_path,
+    It exists because several Config fields (database.max_open_conns, redis.tls_enabled, telemetry.metrics_path,
     every features.* flag except autonomous_execution, and most of
     worker.*) have NO environment-variable binding at all in config.go —
     Load() only reads a value for those from this file (or a flag), never

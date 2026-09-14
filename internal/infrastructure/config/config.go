@@ -696,6 +696,8 @@ func envBindings() []envBinding {
 		{"DATABASE_USER", "Postgres user.", false, func(c *Config, v string) error { c.Database.User = v; return nil }},
 		{"DATABASE_PASSWORD", "Postgres password — a literal value here is accepted because process environment is not a committed file.", true,
 			secretField(func(c *Config) *Secret { return &c.Database.Password })},
+		{"DATABASE_SSL_MODE", "Postgres sslmode (disable, allow, prefer, require, verify-ca, verify-full); defaults to require.", false,
+			func(c *Config, v string) error { c.Database.SSLMode = v; return nil }},
 
 		{"REDIS_ADDRS", "Comma-separated Redis addresses (multiple entries selects cluster mode).", false,
 			func(c *Config, v string) error { c.Redis.Addrs = splitCSV(v); return nil }},

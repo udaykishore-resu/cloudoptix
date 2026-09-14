@@ -64,6 +64,10 @@ services:
       CLOUDOPTIX_DATABASE_NAME: cloudoptix
       CLOUDOPTIX_DATABASE_USER: cloudoptix
       CLOUDOPTIX_DATABASE_PASSWORD: cloudoptix-local-dev
+      # postgres:16-alpine ships without a server certificate, and the config
+      # default is sslmode=require; without this the API/worker die at
+      # startup with "server refused TLS connection".
+      CLOUDOPTIX_DATABASE_SSL_MODE: disable
       CLOUDOPTIX_REDIS_ADDRS: redis:6379
       CLOUDOPTIX_REDIS_PASSWORD: cloudoptix-local-dev
       CLOUDOPTIX_LLM_PROVIDER: scripted

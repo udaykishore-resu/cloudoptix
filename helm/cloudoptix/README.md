@@ -48,7 +48,7 @@ header comment for why): a flat `CLOUDOPTIX_*`-keyed ConfigMap for every
 field `config.go`'s `envBindings()` table actually reads from the
 environment, and a full rendered `config.yaml` (mounted at
 `/etc/cloudoptix/config.yaml`, loaded via `--config`) for the fields that
-have **no** environment-variable binding at all — `database.ssl_mode`,
+have **no** environment-variable binding at all —
 `redis.tls_enabled`, most of `worker.*`, and every `features.*` flag except
 `autonomous_execution`. If you add a `config.*` key to `values.yaml`,
 add it to **both** `templates/configmap.yaml` blocks, or it will silently
