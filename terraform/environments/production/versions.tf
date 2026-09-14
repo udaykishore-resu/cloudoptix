@@ -13,7 +13,7 @@ terraform {
       # attributes. This configuration is written for the 2.x block syntax,
       # and an open upper bound let `terraform init` pick 3.x, which fails
       # validate.
-      version = ">= 2.13.0, < 3.0.0"
+      version = ">= 2.13.0, < 3.3.1"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
