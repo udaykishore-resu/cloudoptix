@@ -8,7 +8,8 @@
 # follow-up shrink this image substantially by copying only
 # .next/standalone + .next/static instead of node_modules wholesale.
 
-ARG NODE_VERSION=20
+# Node 20 reached end-of-life in April 2026; 22 is the active LTS line.
+ARG NODE_VERSION=22
 
 FROM node:${NODE_VERSION}-bookworm-slim AS deps
 WORKDIR /app
@@ -24,6 +25,15 @@ ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
+# Production dependencies only: the deps stage above installs devDependencies
+# for the build, and shipping those (eslint, typescript, ...) in the runtime
+# image both bloats it and puts their dependency trees in front of the image
+# vulnerability scanner.
+FROM node:${NODE_VERSION}-bookworm-slim AS prod-deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --omit=dev
+
 FROM node:${NODE_VERSION}-bookworm-slim AS final
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="cloudoptix-frontend" \
@@ -38,10 +48,25 @@ LABEL org.opencontainers.image.title="cloudoptix-frontend" \
 # non-root user is created explicitly instead.
 RUN groupadd --gid 10001 nextjs && useradd --uid 10001 --gid nextjs --shell /usr/sbin/nologin --no-create-home nextjs
 
+# Runtime hardening, and what keeps the image scan honest:
+#  - apt-get upgrade picks up Debian security fixes published after the
+#    node image was cut (libssl and friends).
+#  - `next start` is launched with `node` directly below, so npm, npx,
+#    corepack and the bundled yarn are package-manager tooling whose own
+#    dependency tree (tar, pacote, sigstore, ...) is scanned like any other
+#    code in the image and regularly carries HIGH/CRITICAL advisories that
+#    have nothing to do with this application; they are removed.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/node_modules \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+           /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg
+
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 COPY --from=build --chown=nextjs:nextjs /app/.next ./.next
-COPY --from=build --chown=nextjs:nextjs /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=nextjs:nextjs /app/node_modules ./node_modules
 COPY --from=build --chown=nextjs:nextjs /app/package.json ./package.json
 # Wildcard, not a plain path: frontend/ currently has no public/ directory
 # to copy, and COPY with a glob that matches zero files is a documented
@@ -50,4 +75,6 @@ COPY --from=build --chown=nextjs:nextjs /app/public* ./public
 
 USER nextjs:nextjs
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+# Equivalent to `npm run start` (package.json: "start": "next start") without
+# needing npm in the image.
+CMD ["node", "node_modules/next/dist/bin/next", "start"]

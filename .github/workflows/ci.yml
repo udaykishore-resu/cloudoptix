@@ -17,7 +17,7 @@ env:
   # Go comes from go.mod (setup-go's go-version-file honours its toolchain
   # directive), so the toolchain is declared once and CI, the Dockerfile
   # and a developer's `go` agree on it.
-  NODE_VERSION: "20"
+  NODE_VERSION: "22"
   TERRAFORM_VERSION: "1.9.8"
   HELM_VERSION: "3.16.4"
 
