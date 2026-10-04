@@ -6,7 +6,7 @@ This document covers the non-functional and platform-level requirements that sit
 
 - **Language and module.** Go 1.26 (`go.mod`), module `github.com/udaykishore-resu/cloudoptix`.
 - **Deployment shape.** A modular monolith exposing one HTTP API, plus a small number of background workers consuming the same event bus — see [`architecture.md`](architecture.md) and [ADR-0001](adr/0001-modular-monolith.md) for why this was chosen over microservices.
-- **No compiled entrypoint exists yet.** There is no `cmd/` directory or `main.go` anywhere in this repository. This is the platform's single largest gap between "implemented" and "running" — see the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require).
+- **The entrypoints exist and have run only against the simulated estate.** `cmd/cloudoptix-api`, `cmd/cloudoptix-worker` and `cmd/coptx` compose the platform through `internal/app`, and `coptx demo run` drives the full onboarding-to-realized-savings flow. What has never happened is a run against a real AWS account — see the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require).
 
 ## Data stores
 
@@ -44,7 +44,7 @@ AssumeRole-only AWS access with external-ID confused-deputy defence, four separa
 
 ## Scale assumptions (untested)
 
-The demo estate is ~500 resources; `tenancy.QuotasFor(PlanEnterprise)` declares an intended ceiling of 500,000 resources and 500 AWS accounts per tenant. Nothing in this codebase has verified the platform holds up at that scale — this is a stated assumption in the domain model's quota design, not a load-tested claim. See [`docs/testing-spec.md`](testing-spec.md).
+The demo estate is 888 resources; `tenancy.QuotasFor(PlanEnterprise)` declares an intended ceiling of 500,000 resources and 500 AWS accounts per tenant. Nothing in this codebase has verified the platform holds up at that scale — this is a stated assumption in the domain model's quota design, not a load-tested claim. See [`docs/testing-spec.md`](testing-spec.md).
 
 ## Compliance-adjacent capabilities (not compliance certification)
 

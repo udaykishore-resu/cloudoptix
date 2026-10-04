@@ -39,9 +39,9 @@ Every AI-dependent code path — onboarding's stage machine, extraction, inferen
 
 ## What has never been tested
 
-- **Any full stack, running as a process.** No `cmd/` entrypoint exists (see the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require)), so there is no such thing as an end-to-end HTTP-request-in, AWS-mutation-out integration test in this codebase — every test exercises a service or handler directly in-process.
+- **A full stack over the network.** `tests/e2e` drives the whole onboarding-to-realized-savings flow, and `tests/integration` covers tenant isolation, AI safety and cost regression, but both compose the platform in-process through `internal/app` rather than issuing HTTP requests at a running binary. The HTTP layer is tested separately with `httptest` (`internal/transport/http`). What is not covered is a request entering a listening process and an AWS mutation leaving it, against a real account — see the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require).
 - **Against a real AWS account.** Every AWS-adjacent test uses mocked/recorded SDK responses or `awssim`.
-- **At scale.** The demo estate is ~500 resources. `tenancy.QuotasFor(PlanEnterprise)` declares an intended ceiling of 500,000 resources; nothing has verified behaviour anywhere near that.
+- **At scale.** The demo estate is 888 resources. `tenancy.QuotasFor(PlanEnterprise)` declares an intended ceiling of 500,000 resources; nothing has verified behaviour anywhere near that.
 - **Concurrency/load.** No load test, no chaos test, no multi-tenant concurrent-execution test exists.
 - **A real LLM provider**, live. `anthropic`/`bedrock` are unit-tested against mocked wire formats only.
 - **The frontend.** It is an unmodified `create-next-app` scaffold with no tests, because no UI has been built against this API.

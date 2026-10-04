@@ -35,7 +35,7 @@ See the root [`README.md`](../README.md#why-traditional-finops-tooling-is-insuff
 - **Being a general-purpose BI tool.** CloudOptix does not aim to replace a data warehouse or a generic dashboarding tool; its object model is architecture-and-cost-shaped, not arbitrary-metric-shaped.
 - **Autonomous execution as the default experience.** Every reference policy pack defaults `default_effect: require_approval`, and validation refuses to let a tenant set it to `auto_execute`. Autonomy is an opt-in narrowing, never the starting posture.
 - **Being the system of record for infrastructure.** CloudOptix discovers and (with permission) mutates AWS resources; it does not replace Terraform/CloudFormation as the source of truth for what should exist — the Cost Compiler prices *their* output, it does not generate infrastructure definitions.
-- **A finished, deployable product**, as of this documentation pass. See the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require) section — there is no `cmd/` entrypoint, no exercised production deployment, and no real-AWS-account track record yet.
+- **A finished, deployable product**, as of this documentation pass. See the root README's [Current limitations](../README.md#current-limitations-and-what-production-hardening-would-still-require) section — the binaries exist and run, but no deployment has been exercised against a real AWS account and no security review has been done.
 
 ## Key differentiators (detail in dedicated specs)
 
