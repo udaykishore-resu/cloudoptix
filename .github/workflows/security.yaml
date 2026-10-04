@@ -84,6 +84,21 @@ jobs:
             -t cloudoptix-${{ matrix.target.name }}:scan \
             --build-arg VERSION=${{ github.sha }} \
             .
+      - name: trivy summary (log)
+        # Human-readable table in the job log. Never fails the job: the SARIF
+        # step below is the gate. Without this, a failing scan shows only
+        # "exit code 1" and the findings live solely in Code scanning.
+        uses: aquasecurity/trivy-action@v0.35.0
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1
+        with:
+          version: v0.75.0
+          image-ref: cloudoptix-${{ matrix.target.name }}:scan
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+          ignore-unfixed: true
       - name: trivy scan
         uses: aquasecurity/trivy-action@v0.35.0
         env:
@@ -93,6 +108,10 @@ jobs:
           TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
           TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1
         with:
+          # Pinned Trivy binary. The action's bundled default (0.69.3) misreads
+          # build info in binaries from newer Go toolchains and reports stdlib
+          # CVEs that are already fixed; keep this in step with local scans.
+          version: v0.75.0
           image-ref: cloudoptix-${{ matrix.target.name }}:scan
           format: sarif
           output: trivy-${{ matrix.target.name }}.sarif
