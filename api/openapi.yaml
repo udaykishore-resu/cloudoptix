@@ -75,8 +75,8 @@ info:
     name: CloudOptix Platform Team
     url: https://cloudoptix.io
   license:
-    name: Proprietary
-    url: https://cloudoptix.io/terms
+    name: MIT
+    url: https://github.com/udaykishore-resu/cloudoptix/blob/main/LICENSE
 
 servers:
   - url: https://api.cloudoptix.io/api/v1

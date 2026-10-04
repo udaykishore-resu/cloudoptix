@@ -39,7 +39,7 @@ ARG VERSION=dev
 LABEL org.opencontainers.image.title="cloudoptix-frontend" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/udaykishore-resu/cloudoptix" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 # node:*-slim still carries a shell and package manager, unlike the API
 # image's distroless base — Next's own `next start` server (not a static

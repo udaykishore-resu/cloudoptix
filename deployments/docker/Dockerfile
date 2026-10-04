@@ -85,7 +85,7 @@ ARG VERSION
 LABEL org.opencontainers.image.title="cloudoptix" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/udaykishore-resu/cloudoptix" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 # Embedded migrations (migrations/embed.go) are compiled into the binary
 # via go:embed — nothing to copy here beyond the binary itself. The base

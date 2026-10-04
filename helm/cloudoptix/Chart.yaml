@@ -14,4 +14,4 @@ maintainers:
 sources:
   - https://github.com/udaykishore-resu/cloudoptix
 annotations:
-  artifacthub.io/license: Apache-2.0
+  artifacthub.io/license: MIT

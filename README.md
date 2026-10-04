@@ -700,3 +700,7 @@ This section exists because an honest limitations list is worth more than a para
 - **Multi-region and multi-account discovery is implemented but only exercised single-account, single-region** in the demo estate and tests. The (service × region) worker-pool design (`internal/application/discovery`) is built for it; the breadth has not been exercised.
 - **Secrets management is a `SecretRef` indirection with no reference implementation of the resolver wired up in this environment.** `ports.SecretResolver` is the interface every notify channel and CUR credential resolves through; no AWS Secrets Manager / Vault-backed implementation has been built or tested here.
 - **No penetration testing, dependency audit, or third-party security review has been performed.** The JWT algorithm-confusion defence, the AssumeRole confused-deputy defence and the audit hash chain are each real, structural mitigations for a specific named attack — they are not a substitute for an actual security review, which has not happened.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Udaykishore Resu.
